@@ -869,8 +869,16 @@ def run_matching(rate_card_file_path=None):
     
     # Step 8: Reorder columns and save results
     print("\n8. Reordering columns and saving results...")
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    output_file = os.path.join(script_dir, "Matched_Shipments_with.xlsx")
+    # Handle Colab environment where __file__ is not defined
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+    except NameError:
+        # In Colab or interactive environments, use current working directory
+        script_dir = os.getcwd()
+    
+    # Use absolute path to ensure it works even after directory changes
+    output_file = os.path.abspath(os.path.join(script_dir, "Matched_Shipments_with.xlsx"))
+    print(f"   Output file will be saved to: {output_file}")
     
     # Reorder columns: LC #, ETOF #, Shipment ID, Delivery Number, Carrier, Ship date, then others
     def reorder_columns(df):
