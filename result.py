@@ -500,20 +500,43 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
                 output_txt_path="column_mapping_results.txt",
                 ignore_rate_card_columns=ignore_columns_list
             )
+            
+            # Check if vocab_result is valid before unpacking
+            if vocab_result is None:
+                log_status("❌ Error: map_and_rename_columns returned None", "error")
+                raise ValueError("Vocabulary mapping function returned None. Check input files and processing steps.")
+            
             etof_renamed, lc_renamed, origin_renamed = vocab_result
             log_status(f"\nVocabulary Mapping Results:", "info")
-            if not etof_renamed.empty:
+            
+            # Check for None before accessing .empty attribute
+            if etof_renamed is not None and not etof_renamed.empty:
                 log_status(f"  - ETOF renamed: {etof_renamed.shape[0]} rows x {etof_renamed.shape[1]} columns", "info")
                 log_status(f"    First 3 rows:", "info")
                 log_status(etof_renamed.head(3).to_string(), "info")
-            if not lc_renamed.empty:
+            elif etof_renamed is None:
+                log_status(f"  - ETOF renamed: None (no ETOF data available)", "warning")
+            else:
+                log_status(f"  - ETOF renamed: Empty dataframe", "warning")
+            
+            if lc_renamed is not None and not lc_renamed.empty:
                 log_status(f"  - LC renamed: {lc_renamed.shape[0]} rows x {lc_renamed.shape[1]} columns", "info")
                 log_status(f"    First 3 rows:", "info")
                 log_status(lc_renamed.head(3).to_string(), "info")
-            if not origin_renamed.empty:
+            elif lc_renamed is None:
+                log_status(f"  - LC renamed: None (no LC data available)", "warning")
+            else:
+                log_status(f"  - LC renamed: Empty dataframe", "warning")
+            
+            if origin_renamed is not None and not origin_renamed.empty:
                 log_status(f"  - Origin renamed: {origin_renamed.shape[0]} rows x {origin_renamed.shape[1]} columns", "info")
                 log_status(f"    First 3 rows:", "info")
                 log_status(origin_renamed.head(3).to_string(), "info")
+            elif origin_renamed is None:
+                log_status(f"  - Origin renamed: None (no Origin data available)", "warning")
+            else:
+                log_status(f"  - Origin renamed: Empty dataframe", "warning")
+            
             log_status(f"{'='*80}\n", "info")
         except Exception as e:
             log_status(f"⚠️ Warning: Vocabulary mapping failed: {e}", "warning")
