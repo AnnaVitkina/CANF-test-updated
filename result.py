@@ -1,5 +1,50 @@
 import os
+import sys
 import gradio as gr
+
+# Auto-detect and add script directory to Python path (for Colab compatibility)
+def setup_python_path():
+    """Setup Python path to include the script directory for imports."""
+    try:
+        # Try to get script directory from __file__
+        if '__file__' in globals():
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+        else:
+            # In Colab or interactive environments, try common locations
+            script_dir = os.getcwd()
+            # Check if we're in a cloned repository
+            possible_paths = [
+                '/content/CANF-test-updated',
+                '/content/CANF-test-updated/test folder',
+                os.path.join(os.getcwd(), 'CANF-test-updated'),
+                os.path.join(os.getcwd(), 'CANF-test-updated', 'test folder'),
+            ]
+            for path in possible_paths:
+                if os.path.exists(path) and os.path.isdir(path):
+                    # Check if vocabular.py exists there
+                    vocabular_path = os.path.join(path, 'vocabular.py')
+                    if os.path.exists(vocabular_path):
+                        script_dir = path
+                        break
+        
+        # Add script directory to Python path if not already there
+        if script_dir and script_dir not in sys.path:
+            sys.path.insert(0, script_dir)
+            print(f"📁 Added to Python path: {script_dir}")
+        
+        # Also try adding 'test folder' subdirectory if it exists
+        test_folder_path = os.path.join(script_dir, 'test folder')
+        if os.path.exists(test_folder_path) and test_folder_path not in sys.path:
+            sys.path.insert(0, test_folder_path)
+            print(f"📁 Added to Python path: {test_folder_path}")
+            
+    except Exception as e:
+        print(f"⚠️ Warning: Could not auto-detect script directory: {e}")
+        print(f"   Current working directory: {os.getcwd()}")
+        print(f"   Please ensure all Python files are in the same directory")
+
+# Run setup when module is imported
+setup_python_path()
 
 def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, order_files, shipper_id, 
                              origin_header_row=None, origin_end_column=None, ignore_rate_card_columns=None):
@@ -336,28 +381,79 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
             log_status(f"Traceback: {error_trace}", "error")
 
         # --- VOCABULARY MAPPING ---
+        # Try importing vocabular with multiple fallback strategies
+        vocabular_imported = False
+        
+        # Strategy 1: Direct import
         try:
             from vocabular import map_and_rename_columns
+            vocabular_imported = True
+            log_status("✓ Successfully imported vocabular module", "info")
         except ImportError:
-            import sys
-            # Handle Colab environment where __file__ is not defined
+            pass
+        
+        # Strategy 2: Try adding current directory and common Colab paths
+        if not vocabular_imported:
+            paths_to_try = [
+                os.getcwd(),
+                '/content/CANF-test-updated',
+                '/content/CANF-test-updated/test folder',
+                os.path.join(os.getcwd(), 'CANF-test-updated'),
+                os.path.join(os.getcwd(), 'CANF-test-updated', 'test folder'),
+            ]
+            
+            for path in paths_to_try:
+                if path and os.path.exists(path):
+                    vocabular_file = os.path.join(path, 'vocabular.py')
+                    if os.path.exists(vocabular_file):
+                        if path not in sys.path:
+                            sys.path.insert(0, path)
+                            log_status(f"   Added to path: {path}", "info")
+                        try:
+                            from vocabular import map_and_rename_columns
+                            vocabular_imported = True
+                            log_status(f"✓ Successfully imported vocabular from: {path}", "info")
+                            break
+                        except ImportError:
+                            continue
+        
+        # Strategy 3: Try script directory (if __file__ exists)
+        if not vocabular_imported:
             try:
                 script_path = os.path.dirname(os.path.abspath(__file__))
-            except NameError:
-                # In Colab or interactive environments, use current working directory
-                script_path = os.getcwd()
-            
-            if script_path not in sys.path:
-                sys.path.append(script_path)
-            # Try importing again after adding to path
-            try:
+                if script_path not in sys.path:
+                    sys.path.insert(0, script_path)
                 from vocabular import map_and_rename_columns
-            except ImportError as e:
-                # If still can't import, log error and re-raise
-                log_status(f"❌ Error: Could not import vocabular module: {e}", "error")
-                log_status(f"   Script path added to sys.path: {script_path}", "info")
-                log_status(f"   Current sys.path: {sys.path[:3]}...", "info")
-                raise
+                vocabular_imported = True
+                log_status(f"✓ Successfully imported vocabular from script directory", "info")
+            except (NameError, ImportError):
+                pass
+        
+        # If still not imported, provide detailed error
+        if not vocabular_imported:
+            error_msg = "❌ Error: Could not import vocabular module"
+            log_status(error_msg, "error")
+            log_status(f"   Current working directory: {os.getcwd()}", "error")
+            log_status(f"   Python path entries (first 5):", "error")
+            for i, path in enumerate(sys.path[:5], 1):
+                log_status(f"     {i}. {path}", "error")
+            log_status(f"   Searched in:", "error")
+            # Re-check paths for error message
+            error_paths = [
+                os.getcwd(),
+                '/content/CANF-test-updated',
+                '/content/CANF-test-updated/test folder',
+                os.path.join(os.getcwd(), 'CANF-test-updated'),
+                os.path.join(os.getcwd(), 'CANF-test-updated', 'test folder'),
+            ]
+            for path in error_paths:
+                if path and os.path.exists(path):
+                    vocab_file = os.path.join(path, 'vocabular.py')
+                    exists = "✓" if os.path.exists(path) else "✗"
+                    vocab_exists = "✓" if os.path.exists(vocab_file) else "✗"
+                    log_status(f"     {exists} {path} (vocabular.py: {vocab_exists})", "error")
+            log_status(f"   Please ensure vocabular.py is in one of these locations", "error")
+            raise ImportError("Could not import vocabular module. Please ensure vocabular.py is accessible.")
 
         try:
             # Parse ignore_rate_card_columns from comma-separated string to list
