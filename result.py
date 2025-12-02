@@ -560,11 +560,36 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
         log_status(f"  - Current directory: {os.getcwd()}", "info")
         log_status(f"{'='*80}", "info")
         matching_file = run_matching(rate_card_file_path=rate_card_filename)
-        if matching_file and not os.path.exists(matching_file):
-            log_status(f"⚠️ Warning: Matching output file not found at: {matching_file}", "warning")
-            matching_file = None
-        elif matching_file:
-            log_status(f"✓ Matching completed. Output file: {matching_file}", "info")
+        
+        # Convert to absolute path if it's a relative path
+        if matching_file:
+            if not os.path.isabs(matching_file):
+                # Make it absolute relative to script_dir
+                matching_file = os.path.abspath(os.path.join(script_dir, matching_file))
+            
+            if not os.path.exists(matching_file):
+                log_status(f"⚠️ Warning: Matching output file not found at: {matching_file}", "warning")
+                log_status(f"   Current directory: {os.getcwd()}", "warning")
+                log_status(f"   Script directory: {script_dir}", "warning")
+                # Try to find it in common locations
+                search_paths = [
+                    os.path.join(script_dir, "Matched_Shipments_with.xlsx"),
+                    os.path.join(os.getcwd(), "Matched_Shipments_with.xlsx"),
+                    os.path.join(output_dir, "Matched_Shipments_with.xlsx"),
+                    "Matched_Shipments_with.xlsx",
+                ]
+                for search_path in search_paths:
+                    abs_search_path = os.path.abspath(search_path)
+                    if os.path.exists(abs_search_path):
+                        matching_file = abs_search_path
+                        log_status(f"   Found file at: {matching_file}", "info")
+                        break
+                else:
+                    matching_file = None
+            else:
+                log_status(f"✓ Matching completed. Output file: {matching_file}", "info")
+        else:
+            log_status(f"⚠️ Warning: run_matching returned None", "warning")
     except Exception as e:
         log_status(f"⚠️ Warning: Matching failed: {e}", "warning")
         import traceback
@@ -577,13 +602,24 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
     # Try to find the matching file in common locations
     if not matching_file:
         possible_locations = [
+            os.path.join(script_dir, "Matched_Shipments_with.xlsx"),
+            os.path.join(output_dir, "Matched_Shipments_with.xlsx"),
+            os.path.join(os.getcwd(), "Matched_Shipments_with.xlsx"),
             "Matched_Shipments_with.xlsx",
-            os.path.join(output_dir, "Matched_Shipments_with.xlsx")
+            # Colab-specific paths
+            "/content/Matched_Shipments_with.xlsx",
+            "/content/CANF-test-updated/Matched_Shipments_with.xlsx",
+            "/content/CANF-test-updated/test folder/Matched_Shipments_with.xlsx",
         ]
+        log_status(f"   Searching for matching file in {len(possible_locations)} locations...", "info")
         for loc in possible_locations:
-            if os.path.exists(loc):
-                matching_file = loc
+            abs_loc = os.path.abspath(loc) if loc else None
+            if abs_loc and os.path.exists(abs_loc):
+                matching_file = abs_loc
+                log_status(f"   ✓ Found matching file at: {matching_file}", "info")
                 break
+        if not matching_file:
+            log_status(f"   ✗ Matching file not found in any of the searched locations", "warning")
 
     # --- PIVOT CREATION ---
     # Only run pivot creation if matching file exists
