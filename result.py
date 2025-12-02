@@ -183,7 +183,7 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
         etof_filename = f"etof_file{etof_ext}"
         input_etof_path = os.path.join(input_dir, etof_filename)
         shutil.copy2(etof_path, input_etof_path)
-        log_status(f"✓ Copied ETOF to: {input_etof_path}", "info")
+        log_status(f"✓ ETOF file ready", "info")
         if not os.path.exists(input_etof_path):
             error_msg = f"❌ Error: Failed to copy ETOF file. Source: {etof_path}, Destination: {input_etof_path}"
             log_status(error_msg, "error")
@@ -207,11 +207,10 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
                 input_lc_path = os.path.join(input_dir, lc_filename)
                 shutil.copy2(lc_file_path, input_lc_path)
                 lc_filenames.append(lc_filename)
-                log_status(f"✓ Copied LC file {idx+1}/{len(lc_files_list)}: {lc_filename}", "info")
                 if not os.path.exists(input_lc_path):
                     log_status(f"⚠️ Warning: Failed to verify LC file copy. Source: {lc_file_path}, Destination: {input_lc_path}", "warning")
         
-        log_status(f"✓ Total {len(lc_filenames)} LC file(s) copied to input folder", "info")
+        log_status(f"✓ {len(lc_filenames)} LC file(s) ready", "info")
     
     if origin_path:
         # Get original filename extension
@@ -219,7 +218,7 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
         origin_filename = f"origin_file{origin_ext}"
         input_origin_path = os.path.join(input_dir, origin_filename)
         shutil.copy2(origin_path, input_origin_path)
-        log_status(f"✓ Copied origin file to: {input_origin_path}", "info")
+        log_status(f"✓ Origin file ready", "info")
         if not os.path.exists(input_origin_path):
             log_status(f"⚠️ Warning: Failed to verify origin file copy. Source: {origin_path}, Destination: {input_origin_path}", "warning")
     
@@ -229,7 +228,7 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
         order_files_filename = f"order_files{order_ext}"
         input_order_files_path = os.path.join(input_dir, order_files_filename)
         shutil.copy2(order_files_path, input_order_files_path)
-        log_status(f"✓ Copied order files to: {input_order_files_path}", "info")
+        log_status(f"✓ Order files ready", "info")
         if not os.path.exists(input_order_files_path):
             log_status(f"⚠️ Warning: Failed to verify order files copy. Source: {order_files_path}, Destination: {input_order_files_path}", "warning")
 
@@ -249,44 +248,23 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
                     log_status(f"Current directory: {os.getcwd()}", "info")
                     log_status(f"Input directory contents: {os.listdir('input') if os.path.exists('input') else 'input folder does not exist'}", "info")
                 else:
-                    log_status(f"\n{'='*80}", "info")
-                    log_status(f"Processing ETOF file: {etof_filename}", "info")
-                    log_status(f"{'='*80}", "info")
+                    log_status(f"📄 Processing ETOF file...", "info")
                     etof_df, etof_columns = process_etof_file(etof_filename)
-                    log_status(f"\nETOF Processing Results:", "info")
-                    log_status(f"  - Shape: {etof_df.shape[0]} rows x {etof_df.shape[1]} columns", "info")
-                    log_status(f"  - Columns ({len(etof_columns)}): {etof_columns[:10]}{'...' if len(etof_columns) > 10 else ''}", "info")
-                    log_status(f"\nFirst 5 rows of ETOF data:", "info")
-                    log_status(etof_df.head().to_string(), "info")
-                    log_status(f"{'='*80}\n", "info")
+                    log_status(f"✓ ETOF processed: {etof_df.shape[0]} rows, {etof_df.shape[1]} columns", "info")
         except Exception as e:
-            log_status(f"⚠️ Warning: ETOF processing failed: {e}", "warning")
-            import traceback
-            error_trace = traceback.format_exc()
-            log_status(f"Traceback: {error_trace}", "error")
+            log_status(f"⚠️ ETOF processing failed: {str(e)}", "warning")
 
         # --- PART 2: LC Processing ---
         try:
             from part2_lc_processing import process_lc_input
             if lc_filenames:
-                log_status(f"\n{'='*80}", "info")
-                log_status(f"Processing LC file(s): {len(lc_filenames)} file(s)", "info")
-                log_status(f"  - Files: {', '.join(lc_filenames)}", "info")
-                log_status(f"{'='*80}", "info")
+                log_status(f"📄 Processing {len(lc_filenames)} LC file(s)...", "info")
                 # Pass list of filenames if multiple, single filename if one
                 lc_input_param = lc_filenames if len(lc_filenames) > 1 else lc_filenames[0]
                 lc_df, lc_columns = process_lc_input(lc_input_param, recursive=False)
-                log_status(f"\nLC Processing Results:", "info")
-                log_status(f"  - Shape: {lc_df.shape[0]} rows x {lc_df.shape[1]} columns", "info")
-                log_status(f"  - Columns ({len(lc_columns)}): {lc_columns[:10]}{'...' if len(lc_columns) > 10 else ''}", "info")
-                log_status(f"\nFirst 5 rows of LC data:", "info")
-                log_status(lc_df.head().to_string(), "info")
-                log_status(f"{'='*80}\n", "info")
+                log_status(f"✓ LC processed: {lc_df.shape[0]} rows, {lc_df.shape[1]} columns", "info")
         except Exception as e:
-            log_status(f"⚠️ Warning: LC processing failed: {e}", "warning")
-            import traceback
-            error_trace = traceback.format_exc()
-            log_status(f"Traceback: {error_trace}", "error")
+            log_status(f"⚠️ LC processing failed: {str(e)}", "warning")
 
         # --- PART 3: Origin File Processing ---
         try:
@@ -305,23 +283,11 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
                         end_column_int = int(origin_end_column)
                     except (ValueError, TypeError):
                         end_column_int = None
-                log_status(f"\n{'='*80}", "info")
-                log_status(f"Processing Origin file: {origin_filename}", "info")
-                log_status(f"  - Header row: {header_row_int}", "info")
-                log_status(f"  - End column: {end_column_int}", "info")
-                log_status(f"{'='*80}", "info")
+                log_status(f"📄 Processing Origin file...", "info")
                 origin_df, origin_columns = process_origin_file(origin_filename, header_row=header_row_int, end_column=end_column_int)
-                log_status(f"\nOrigin Processing Results:", "info")
-                log_status(f"  - Shape: {origin_df.shape[0]} rows x {origin_df.shape[1]} columns", "info")
-                log_status(f"  - Columns ({len(origin_columns)}): {origin_columns[:10]}{'...' if len(origin_columns) > 10 else ''}", "info")
-                log_status(f"\nFirst 5 rows of Origin data:", "info")
-                log_status(origin_df.head().to_string(), "info")
-                log_status(f"{'='*80}\n", "info")
+                log_status(f"✓ Origin processed: {origin_df.shape[0]} rows, {origin_df.shape[1]} columns", "info")
         except Exception as e:
-            log_status(f"⚠️ Warning: Origin file processing failed: {e}", "warning")
-            import traceback
-            error_trace = traceback.format_exc()
-            log_status(f"Traceback: {error_trace}", "error")
+            log_status(f"⚠️ Origin processing failed: {str(e)}", "warning")
 
         # --- PART 4: Rate Card Processing ---
         try:
@@ -334,33 +300,17 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
                     log_status(f"Current directory: {os.getcwd()}", "info")
                     log_status(f"Input directory contents: {os.listdir('input') if os.path.exists('input') else 'input folder does not exist'}", "info")
                 else:
-                    log_status(f"\n{'='*80}", "info")
-                    log_status(f"Processing Rate Card file: {rate_card_filename}", "info")
-                    log_status(f"{'='*80}", "info")
+                    log_status(f"📄 Processing Rate Card file...", "info")
                     rate_card_df, rate_card_columns, rate_card_conditions = process_rate_card(rate_card_filename)
-                    log_status(f"\nRate Card Processing Results:", "info")
-                    log_status(f"  - Shape: {rate_card_df.shape[0]} rows x {rate_card_df.shape[1]} columns", "info")
-                    log_status(f"  - Columns ({len(rate_card_columns)}): {rate_card_columns[:10]}{'...' if len(rate_card_columns) > 10 else ''}", "info")
-                    log_status(f"  - Conditions: {len(rate_card_conditions)} columns with conditions", "info")
-                    log_status(f"\nFirst 5 rows of Rate Card data:", "info")
-                    log_status(rate_card_df.head().to_string(), "info")
-                    log_status(f"{'='*80}\n", "info")
+                    log_status(f"✓ Rate Card processed: {rate_card_df.shape[0]} rows, {rate_card_df.shape[1]} columns, {len(rate_card_conditions)} conditions", "info")
         except Exception as e:
-            log_status(f"⚠️ Warning: Rate card processing failed: {e}", "warning")
-            import traceback
-            error_trace = traceback.format_exc()
-            log_status(f"Traceback: {error_trace}", "error")
+            log_status(f"⚠️ Rate card processing failed: {str(e)}", "warning")
 
         # --- PART 7: Optional Order-LC-ETOF Mapping ---
         try:
             from part7_optional_order_lc_etof_mapping import process_order_lc_etof_mapping
             if lc_filenames and etof_filename:
-                log_status(f"\n{'='*80}", "info")
-                log_status(f"Processing Order-LC-ETOF Mapping", "info")
-                log_status(f"  - LC file(s): {len(lc_filenames)} file(s) - {', '.join(lc_filenames)}", "info")
-                log_status(f"  - ETOF file: {etof_filename}", "info")
-                log_status(f"  - Order files: {order_files_filename if order_files_filename else 'None'}", "info")
-                log_status(f"{'='*80}", "info")
+                log_status(f"🔗 Processing Order-LC-ETOF Mapping...", "info")
                 # Pass list of filenames if multiple, single filename if one
                 lc_input_param = lc_filenames if len(lc_filenames) > 1 else lc_filenames[0]
                 lc_mapped_df, lc_mapped_columns = process_order_lc_etof_mapping(
@@ -368,17 +318,9 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
                     etof_path=etof_filename,
                     order_files_path=order_files_filename
                 )
-                log_status(f"\nOrder-LC-ETOF Mapping Results:", "info")
-                log_status(f"  - Shape: {lc_mapped_df.shape[0]} rows x {lc_mapped_df.shape[1]} columns", "info")
-                log_status(f"  - Columns ({len(lc_mapped_columns)}): {lc_mapped_columns[:10]}{'...' if len(lc_mapped_columns) > 10 else ''}", "info")
-                log_status(f"\nFirst 5 rows of mapped LC data:", "info")
-                log_status(lc_mapped_df.head().to_string(), "info")
-                log_status(f"{'='*80}\n", "info")
+                log_status(f"✓ Order-LC-ETOF mapping completed: {lc_mapped_df.shape[0]} rows", "info")
         except Exception as e:
-            log_status(f"⚠️ Warning: Order-LC-ETOF mapping failed: {e}", "warning")
-            import traceback
-            error_trace = traceback.format_exc()
-            log_status(f"Traceback: {error_trace}", "error")
+            log_status(f"⚠️ Order-LC-ETOF mapping failed: {str(e)}", "warning")
 
         # --- VOCABULARY MAPPING ---
         # Try importing vocabular with multiple fallback strategies
@@ -476,16 +418,7 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
                     end_column_int = None
             
             # Use filenames (relative to input/) for vocabular mapping
-            log_status(f"\n{'='*80}", "info")
-            log_status(f"Processing Vocabulary Mapping", "info")
-            log_status(f"  - Rate Card: {rate_card_filename}", "info")
-            log_status(f"  - ETOF: {etof_filename}", "info")
-            log_status(f"  - Origin: {origin_filename if origin_filename else 'None'}", "info")
-            log_status(f"  - LC: {len(lc_filenames)} file(s) - {', '.join(lc_filenames) if lc_filenames else 'None'}", "info")
-            log_status(f"  - Order Files: {order_files_filename if order_files_filename else 'None'}", "info")
-            log_status(f"  - Shipper ID: {shipper_id}", "info")
-            log_status(f"  - Ignore columns: {ignore_columns_list if ignore_columns_list else 'None'}", "info")
-            log_status(f"{'='*80}", "info")
+            log_status(f"🔤 Processing Vocabulary Mapping...", "info")
             # Pass list of filenames if multiple, single filename if one, or None
             lc_input_param = lc_filenames if len(lc_filenames) > 1 else (lc_filenames[0] if lc_filenames else None)
             vocab_result = map_and_rename_columns(
@@ -507,42 +440,22 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
                 raise ValueError("Vocabulary mapping function returned None. Check input files and processing steps.")
             
             etof_renamed, lc_renamed, origin_renamed = vocab_result
-            log_status(f"\nVocabulary Mapping Results:", "info")
             
             # Check for None before accessing .empty attribute
+            vocab_summary = []
             if etof_renamed is not None and not etof_renamed.empty:
-                log_status(f"  - ETOF renamed: {etof_renamed.shape[0]} rows x {etof_renamed.shape[1]} columns", "info")
-                log_status(f"    First 3 rows:", "info")
-                log_status(etof_renamed.head(3).to_string(), "info")
-            elif etof_renamed is None:
-                log_status(f"  - ETOF renamed: None (no ETOF data available)", "warning")
-            else:
-                log_status(f"  - ETOF renamed: Empty dataframe", "warning")
-            
+                vocab_summary.append(f"ETOF: {etof_renamed.shape[0]} rows")
             if lc_renamed is not None and not lc_renamed.empty:
-                log_status(f"  - LC renamed: {lc_renamed.shape[0]} rows x {lc_renamed.shape[1]} columns", "info")
-                log_status(f"    First 3 rows:", "info")
-                log_status(lc_renamed.head(3).to_string(), "info")
-            elif lc_renamed is None:
-                log_status(f"  - LC renamed: None (no LC data available)", "warning")
-            else:
-                log_status(f"  - LC renamed: Empty dataframe", "warning")
-            
+                vocab_summary.append(f"LC: {lc_renamed.shape[0]} rows")
             if origin_renamed is not None and not origin_renamed.empty:
-                log_status(f"  - Origin renamed: {origin_renamed.shape[0]} rows x {origin_renamed.shape[1]} columns", "info")
-                log_status(f"    First 3 rows:", "info")
-                log_status(origin_renamed.head(3).to_string(), "info")
-            elif origin_renamed is None:
-                log_status(f"  - Origin renamed: None (no Origin data available)", "warning")
-            else:
-                log_status(f"  - Origin renamed: Empty dataframe", "warning")
+                vocab_summary.append(f"Origin: {origin_renamed.shape[0]} rows")
             
-            log_status(f"{'='*80}\n", "info")
+            if vocab_summary:
+                log_status(f"✓ Vocabulary mapping completed ({', '.join(vocab_summary)})", "info")
+            else:
+                log_status(f"⚠️ Vocabulary mapping completed but no data available", "warning")
         except Exception as e:
-            log_status(f"⚠️ Warning: Vocabulary mapping failed: {e}", "warning")
-            import traceback
-            error_trace = traceback.format_exc()
-            log_status(f"Traceback: {error_trace}", "error")
+            log_status(f"⚠️ Vocabulary mapping failed: {str(e)}", "warning")
     finally:
         # Restore original working directory
         os.chdir(original_cwd)
@@ -554,11 +467,7 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
         # Change back to script directory for matching (it expects to be in script_dir)
         os.chdir(script_dir)
         # Pass the rate card filename to run_matching
-        log_status(f"\n{'='*80}", "info")
-        log_status(f"Running Matching Process", "info")
-        log_status(f"  - Rate Card file: {rate_card_filename}", "info")
-        log_status(f"  - Current directory: {os.getcwd()}", "info")
-        log_status(f"{'='*80}", "info")
+        log_status(f"🔍 Running Matching Process...", "info")
         matching_file = run_matching(rate_card_file_path=rate_card_filename)
         
         # Convert to absolute path if it's a relative path
@@ -568,9 +477,6 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
                 matching_file = os.path.abspath(os.path.join(script_dir, matching_file))
             
             if not os.path.exists(matching_file):
-                log_status(f"⚠️ Warning: Matching output file not found at: {matching_file}", "warning")
-                log_status(f"   Current directory: {os.getcwd()}", "warning")
-                log_status(f"   Script directory: {script_dir}", "warning")
                 # Try to find it in common locations
                 search_paths = [
                     os.path.join(script_dir, "Matched_Shipments_with.xlsx"),
@@ -582,19 +488,17 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
                     abs_search_path = os.path.abspath(search_path)
                     if os.path.exists(abs_search_path):
                         matching_file = abs_search_path
-                        log_status(f"   Found file at: {matching_file}", "info")
                         break
                 else:
                     matching_file = None
-            else:
-                log_status(f"✓ Matching completed. Output file: {matching_file}", "info")
+                    log_status(f"⚠️ Matching output file not found", "warning")
+            
+            if matching_file:
+                log_status(f"✓ Matching completed successfully", "info")
         else:
-            log_status(f"⚠️ Warning: run_matching returned None", "warning")
+            log_status(f"⚠️ Matching process did not produce output", "warning")
     except Exception as e:
-        log_status(f"⚠️ Warning: Matching failed: {e}", "warning")
-        import traceback
-        error_trace = traceback.format_exc()
-        log_status(f"Traceback: {error_trace}", "error")
+        log_status(f"⚠️ Matching failed: {str(e)}", "warning")
     finally:
         # Restore original working directory after matching
         os.chdir(original_cwd)
@@ -611,22 +515,18 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
             "/content/CANF-test-updated/Matched_Shipments_with.xlsx",
             "/content/CANF-test-updated/test folder/Matched_Shipments_with.xlsx",
         ]
-        log_status(f"   Searching for matching file in {len(possible_locations)} locations...", "info")
         for loc in possible_locations:
             abs_loc = os.path.abspath(loc) if loc else None
             if abs_loc and os.path.exists(abs_loc):
                 matching_file = abs_loc
-                log_status(f"   ✓ Found matching file at: {matching_file}", "info")
                 break
-        if not matching_file:
-            log_status(f"   ✗ Matching file not found in any of the searched locations", "warning")
 
     # --- PIVOT CREATION ---
     # Only run pivot creation if matching file exists
     if matching_file and os.path.exists(matching_file):
         try:
             from pivot_creation import update_canf_file
-            log_status(f"Running Pivot Creation...", "info")
+            log_status(f"📊 Creating pivot table...", "info")
             update_canf_file(matching_output_file=matching_file, shipper_value=shipper_id)
             log_status(f"✓ Pivot creation completed", "info")
         except Exception as e:
@@ -691,42 +591,48 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
             status_summary = ["❌ CRITICAL ERROR:", error_msg, "", "All status messages:", "-" * 80] + status_messages
             return None, "\n".join(status_summary)
 
-    # Prepare status summary
+    # Prepare concise status summary
     status_summary = []
-    status_summary.append("=" * 80)
-    status_summary.append("WORKFLOW EXECUTION SUMMARY")
-    status_summary.append("=" * 80)
+    status_summary.append("=" * 60)
+    status_summary.append("WORKFLOW SUMMARY")
+    status_summary.append("=" * 60)
+    status_summary.append("")
+    
+    if final_file_path and os.path.exists(final_file_path):
+        status_summary.append(f"✅ SUCCESS: Output file created")
+        status_summary.append(f"   Location: {final_file_path}")
+    else:
+        status_summary.append(f"❌ Workflow did not complete successfully")
+    
     status_summary.append("")
     
     if errors:
         status_summary.append(f"❌ ERRORS ({len(errors)}):")
-        for i, error in enumerate(errors, 1):
+        for i, error in enumerate(errors[:5], 1):  # Limit to first 5 errors
             status_summary.append(f"  {i}. {error}")
+        if len(errors) > 5:
+            status_summary.append(f"  ... and {len(errors) - 5} more errors")
         status_summary.append("")
     
     if warnings:
         status_summary.append(f"⚠️  WARNINGS ({len(warnings)}):")
-        for i, warning in enumerate(warnings, 1):
+        for i, warning in enumerate(warnings[:5], 1):  # Limit to first 5 warnings
             status_summary.append(f"  {i}. {warning}")
+        if len(warnings) > 5:
+            status_summary.append(f"  ... and {len(warnings) - 5} more warnings")
         status_summary.append("")
     
-    if final_file_path and os.path.exists(final_file_path):
-        status_summary.append(f"✅ SUCCESS: Output file created at: {final_file_path}")
-        status_summary.append("")
-        status_summary.append("All status messages:")
-        status_summary.append("-" * 80)
-        status_summary.extend(status_messages)
-        status_text = "\n".join(status_summary)
-        return final_file_path, status_text
-    else:
-        error_msg = "❌ Workflow did not complete. Check errors above for details."
-        status_summary.append(error_msg)
-        status_summary.append("")
-        status_summary.append("All status messages:")
-        status_summary.append("-" * 80)
-        status_summary.extend(status_messages)
-        status_text = "\n".join(status_summary)
-        return None, status_text
+    # Add key status messages (filter out verbose ones)
+    key_messages = [msg for msg in status_messages if any(keyword in msg for keyword in 
+                    ['✓', '❌', '⚠️', 'Error', 'Warning', 'SUCCESS', 'completed', 'failed'])]
+    
+    if key_messages:
+        status_summary.append("Key Steps:")
+        status_summary.append("-" * 60)
+        status_summary.extend(key_messages[-15:])  # Show last 15 key messages
+    
+    status_text = "\n".join(status_summary)
+    return (final_file_path, status_text) if final_file_path and os.path.exists(final_file_path) else (None, status_text)
 
 # ---- Gradio UI definition for Google Colab ----
 with gr.Blocks(title="ETOF/LC/Rate Card/Order Workflow", theme=gr.themes.Soft()) as demo:
