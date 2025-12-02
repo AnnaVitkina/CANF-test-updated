@@ -25,16 +25,29 @@ def clean_folder(folder_path):
 def clean_input_and_output_folders():
     """
     Cleans both the 'input' and 'output' folders in the current directory.
+    Handles Colab environment where __file__ is not defined.
     """
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Handle Colab environment where __file__ is not defined
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+    except NameError:
+        # In Colab or interactive environments, use current working directory
+        script_dir = os.getcwd()
+    
     input_folder = os.path.join(script_dir, "input")
     output_folder = os.path.join(script_dir, "output")
 
     deleted_input = clean_folder(input_folder)
     deleted_output = clean_folder(output_folder)
 
-    print(f"Deleted from input: {deleted_input}")
-    print(f"Deleted from output: {deleted_output}")
+    print(f"Deleted from input: {len(deleted_input)} item(s)")
+    print(f"Deleted from output: {len(deleted_output)} item(s)")
+    
+    if deleted_input:
+        print(f"  Input items: {deleted_input[:5]}{'...' if len(deleted_input) > 5 else ''}")
+    if deleted_output:
+        print(f"  Output items: {deleted_output[:5]}{'...' if len(deleted_output) > 5 else ''}")
 
 # Example usage:
-clean_input_and_output_folders()
+if __name__ == "__main__":
+    clean_input_and_output_folders()
