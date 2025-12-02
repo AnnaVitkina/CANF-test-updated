@@ -99,9 +99,11 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
     log_status("✅ Validation passed. Starting workflow...", "info")
 
     # Create output and input directories for results
+    # Handle Colab environment where __file__ is not defined
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
     except NameError:
+        # In Colab or interactive environments, use current working directory
         script_dir = os.getcwd()
     output_dir = os.path.join(script_dir, "output")
     input_dir = os.path.join(script_dir, "input")
@@ -338,8 +340,24 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
             from vocabular import map_and_rename_columns
         except ImportError:
             import sys
-            sys.path.append(os.path.dirname(__file__))
-            from vocabular import map_and_rename_columns
+            # Handle Colab environment where __file__ is not defined
+            try:
+                script_path = os.path.dirname(os.path.abspath(__file__))
+            except NameError:
+                # In Colab or interactive environments, use current working directory
+                script_path = os.getcwd()
+            
+            if script_path not in sys.path:
+                sys.path.append(script_path)
+            # Try importing again after adding to path
+            try:
+                from vocabular import map_and_rename_columns
+            except ImportError as e:
+                # If still can't import, log error and re-raise
+                log_status(f"❌ Error: Could not import vocabular module: {e}", "error")
+                log_status(f"   Script path added to sys.path: {script_path}", "info")
+                log_status(f"   Current sys.path: {sys.path[:3]}...", "info")
+                raise
 
         try:
             # Parse ignore_rate_card_columns from comma-separated string to list
@@ -700,9 +718,11 @@ if __name__ == "__main__":
     import sys
     
     # Create input and output folders when program starts
+    # Handle Colab environment where __file__ is not defined
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
     except NameError:
+        # In Colab or interactive environments, use current working directory
         script_dir = os.getcwd()
     
     input_dir = os.path.join(script_dir, "input")
