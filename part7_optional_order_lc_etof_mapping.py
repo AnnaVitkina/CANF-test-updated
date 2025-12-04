@@ -272,6 +272,7 @@ def process_order_lc_etof_mapping(lc_input_path, etof_path, order_files_path=Non
 
     if 'DELIVERY_NUMBER'in lc_dataframe_final.columns:
         lc_dataframe_final = lc_dataframe_final.rename(columns=['DELIVERY_NUMBER': 'Delivery Number']
+        lc_column_names = lc_dataframe_final.columns.tolist()
     
     save_dataframe_to_excel(lc_dataframe_final, output_filename)
     
@@ -291,5 +292,6 @@ def process_order_lc_etof_mapping(lc_input_path, etof_path, order_files_path=Non
 #        etof_path, 
 #        order_files_path=order_files_path
 #    )
+
 
 
