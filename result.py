@@ -636,16 +636,16 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
 
 # ---- Gradio UI definition for Google Colab ----
 with gr.Blocks(title="ETOF/LC/Rate Card/Order Workflow", theme=gr.themes.Soft()) as demo:
-    gr.Markdown("# 📊 ETOF/LC/Rate Card/Order Workflow Processor")
-    gr.Markdown("### Process and match shipment data with rate cards")
+    gr.Markdown("# 📊 CANF Analyzer")
+    gr.Markdown("### Process and match shipment data with rate card lanes")
     
     with gr.Accordion("📖 Instructions & Information", open=False):
         gr.Markdown("""
         ## How to Use This Workflow
         
         ### Step 1: Upload Required Files
-        - **Rate Card File** (Required): Excel file containing rate card data (.xlsx or .xls)
-        - **ETOF File** (Required): Excel file containing ETOF shipment data (.xlsx or .xls)
+        - **Rate Card File** (Required): Excel file containing rate card data (.xlsx)
+        - **ETOF File** (Required): Excel file containing ETOF shipment data (.xlsx or)
         - **Shipper ID** (Required): Enter the shipper identifier (e.g., "dairb")
         
         ### Step 2: Upload Optional Files (if available)
@@ -694,13 +694,13 @@ with gr.Blocks(title="ETOF/LC/Rate Card/Order Workflow", theme=gr.themes.Soft())
     gr.Markdown("### 📁 File Upload")
     gr.Markdown("**Required:** Rate Card File, ETOF File, and Shipper ID  |  **Optional:** LC File(s), Origin File, Order Files")
     with gr.Row():
-        rate_card_input = gr.File(label="Rate Card File (.xlsx, .xls) *Required", file_types=[".xlsx", ".xls"])
-        etof_input = gr.File(label="ETOF File (.xlsx, .xls) *Required", file_types=[".xlsx", ".xls"])
-        lc_input = gr.File(label="LC File(s) (.xlsx, .xls, .xml) *Optional", file_types=[".xlsx", ".xls", ".xml"], file_count="multiple")
+        rate_card_input = gr.File(label="Rate Card File (.xlsx) *Required", file_types=[".xlsx", ".xls"])
+        etof_input = gr.File(label="ETOF File (.xlsx,) *Required", file_types=[".xlsx", ".xls"])
+        lc_input = gr.File(label="LC File(s) (.xml) *Optional", file_types=[".xlsx", ".xls", ".xml"], file_count="multiple")
     with gr.Row():
-        origin_input = gr.File(label="Origin File (.xlsx, .xls, .csv, .edi) *Optional", file_types=[".xlsx", ".xls", ".csv", ".edi"])
-        order_files_input = gr.File(label="Order Files Export (.xlsx, .xls, .csv) *Optional", file_types=[".xlsx", ".xls", ".csv"])
-        shipper_id_input = gr.Textbox(label="Shipper ID *Required", placeholder="e.g. dairb or use ID as string")
+        origin_input = gr.File(label="Origin File (.xlsx, .csv, .edi) *Optional", file_types=[".xlsx", ".xls", ".csv", ".edi"])
+        order_files_input = gr.File(label="Order Files Export (.xlsx) *Optional", file_types=[".xlsx", ".xls", ".csv"])
+        shipper_id_input = gr.Textbox(label="Shipper ID *Required", placeholder="e.g. dairb or use Shipper short name as string")
     
     # Origin file parameters (shown conditionally)
     with gr.Row(visible=False) as origin_params_row:
@@ -714,7 +714,7 @@ with gr.Blocks(title="ETOF/LC/Rate Card/Order Workflow", theme=gr.themes.Soft())
         origin_end_column_input = gr.Number(
             label="Origin File End Column (1-indexed, like Excel)",
             value=None,
-            info="Last column to read (e.g., 33 for columns A through 33). Leave empty to read all columns.",
+            info="Last column to read (e.g., 33 - will be read 33 first columns). Leave empty to read all columns.",
             precision=0,
             minimum=1
         )
@@ -727,7 +727,7 @@ with gr.Blocks(title="ETOF/LC/Rate Card/Order Workflow", theme=gr.themes.Soft())
     )
     
     gr.Markdown("---")
-    launch_button = gr.Button("🚀 Run Full Workflow", variant="primary", size="lg")
+    launch_button = gr.Button("🚀 Run Analyzer", variant="primary", size="lg")
     
     with gr.Row():
         out = gr.File(label="📥 Result.xlsx (Download Final Output)")
@@ -811,3 +811,4 @@ if __name__ == "__main__":
         print(f"💡 Input files will be saved to: {input_dir}")
         print(f"💡 Output files will be saved to: {output_dir}")
         demo.launch(server_name="127.0.0.1", share=False)
+
