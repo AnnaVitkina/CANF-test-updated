@@ -263,7 +263,9 @@ EXCLUDED_COLUMNS = [
     'LC #',
     'LC#',
     'Carrier',
-    'Lane #'
+    'Lane #',
+    'DELIVERY_NUMBER',
+    'DELIVERY NUMBER(s)'
 ]
 # Note: Delivery Number is NOT excluded - it will be extracted and renamed appropriately
 
@@ -1245,4 +1247,5 @@ def map_and_rename_columns(
  #   except Exception:
  #       pass
 #
+
 
