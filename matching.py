@@ -383,7 +383,7 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                 unique_rc_orig_dest_combinations.add((orig, dest))
     
     # Initialize a new 'comment' column in df_etofs
-    df_etofs['comment'] = ''
+    df_etofs['Comments'] = ''
     
     # Iterate through each row of df_etofs
     for index_etofs, row_etofs in df_etofs.iterrows():
@@ -501,7 +501,7 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         
         # Check if more than 4 possible matches
         if len(best_matching_rate_card_rows) > 4:
-            comments_for_current_etofs_row.append("Please recheck the shipment details")
+            comments_for_current_etofs_row.append("Please recheck the shipment details. Too many possible rate lanes cab ne applied with changes.")
         
         # Only proceed with date validation and discrepancy checking if we have matches
         if len(best_matching_rate_card_rows) == 0:
@@ -631,7 +631,7 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         # Check if more than 4 changes (discrepancies) across all matches
         total_discrepancies = sum(len(match['discrepancies']) for match in best_matching_rate_card_rows)
         if total_discrepancies > 5:
-            comments_for_current_etofs_row.append("Please recheck the shipment details")
+            comments_for_current_etofs_row.append("Please recheck the shipment details. Too many shipment details to update.")
         
         # Check if "please recheck the shipment details" is already in comments
         # If so, don't add discrepancy details - this will be the full comment
@@ -1088,3 +1088,4 @@ def run_matching(rate_card_file_path=None):
     print("="*80)
     
     return output_file
+
