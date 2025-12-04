@@ -635,7 +635,7 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
     return (final_file_path, status_text) if final_file_path and os.path.exists(final_file_path) else (None, status_text)
 
 # ---- Gradio UI definition for Google Colab ----
-with gr.Blocks(title="ETOF/LC/Rate Card/Order Workflow", theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
     gr.Markdown("# 📊 CANF Analyzer")
     gr.Markdown("### Process and match shipment data with rate card lanes")
     
@@ -695,7 +695,7 @@ with gr.Blocks(title="ETOF/LC/Rate Card/Order Workflow", theme=gr.themes.Soft())
     gr.Markdown("**Required:** Rate Card File, ETOF File, and Shipper ID  |  **Optional:** LC File(s), Origin File, Order Files")
     with gr.Row():
         rate_card_input = gr.File(label="Rate Card File (.xlsx) *Required", file_types=[".xlsx", ".xls"])
-        etof_input = gr.File(label="ETOF File (.xlsx,) *Required", file_types=[".xlsx", ".xls"])
+        etof_input = gr.File(label="ETOF File (.xlsx) *Required", file_types=[".xlsx", ".xls"])
         lc_input = gr.File(label="LC File(s) (.xml) *Optional", file_types=[".xlsx", ".xls", ".xml"], file_count="multiple")
     with gr.Row():
         origin_input = gr.File(label="Origin File (.xlsx, .csv, .edi) *Optional", file_types=[".xlsx", ".xls", ".csv", ".edi"])
@@ -811,4 +811,5 @@ if __name__ == "__main__":
         print(f"💡 Input files will be saved to: {input_dir}")
         print(f"💡 Output files will be saved to: {output_dir}")
         demo.launch(server_name="127.0.0.1", share=False)
+
 
