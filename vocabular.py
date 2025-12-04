@@ -776,11 +776,13 @@ def map_and_rename_columns(
         
         output_df = source_df.copy()
 
-        #if 'DELIVERY_NUMBER'in output_df.columns:
-            #output_df = output_df.rename(columns={'DELIVERY_NUMBER': 'Delivery Number'})
+        if 'DELIVERY_NUMBER'in output_df.columns:
+            output_df = output_df.rename(columns={'DELIVERY_NUMBER': 'Delivery Number'})
 
-        #if 'DELIVERY NUMBER(s)'in output_df.columns:
-            #output_df = output_df.rename(columns={'DELIVERY NUMBER(s)': 'Delivery Number'})
+        if 'DELIVERY NUMBER(s)'in output_df.columns:
+            output_df = output_df.rename(columns={'DELIVERY NUMBER(s)': 'Delivery Number'})
+         if 'SHIPMENT_ID'in output_df.columns:
+            output_df = output_df.rename(columns={'SHIPMENT_ID': 'Shipment ID'})
                                          
         rename_dict = {}
         columns_to_keep = []
@@ -1228,6 +1230,7 @@ def map_and_rename_columns(
  #   except Exception:
   #      pass
 #
+
 
 
 
