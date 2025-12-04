@@ -269,6 +269,9 @@ def process_order_lc_etof_mapping(lc_input_path, etof_path, order_files_path=Non
     
     # Step 4: Map ETOF # to LC dataframe
     lc_dataframe_final, lc_column_names = map_etof_to_lc(etof_dataframe, lc_dataframe)
+
+    if 'DELIVERY_NUMBER'in lc_dataframe_final.columns:
+        lc_dataframe_final = lc_dataframe_final.rename(columns=['DELIVERY_NUMBER': 'Delivery Number']
     
     save_dataframe_to_excel(lc_dataframe_final, output_filename)
     
@@ -288,4 +291,5 @@ def process_order_lc_etof_mapping(lc_input_path, etof_path, order_files_path=Non
 #        etof_path, 
 #        order_files_path=order_files_path
 #    )
+
 
