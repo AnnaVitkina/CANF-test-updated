@@ -887,7 +887,7 @@ def map_and_rename_columns(
             # Find the column (case-insensitive, handle variations)
             for col in output_df.columns:
                 col_normalized = col.lower().replace(' ', '').replace('#', '#')
-                key_normalized = key_col.lower().replace(' ', '').replace('#', '#'))
+                key_normalized = key_col.lower().replace(' ', '').replace('#', '#')
                 if col_normalized == key_normalized:
                     if col not in final_columns:
                         final_columns.append(col)
@@ -1237,6 +1237,7 @@ def map_and_rename_columns(
  #   except Exception:
   #      pass
 #
+
 
 
 
