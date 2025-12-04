@@ -304,6 +304,8 @@ def is_excluded_column(column_name):
                 return True
             if 'delivery' in excluded_lower and 'delivery' in col_lower and 'number' in col_lower:
                 return True
+            if 'shipment' in excluded_lower and 'shipment' in col_lower and 'id' in col_lower:
+                return True
     
     return False
 
@@ -1231,6 +1233,7 @@ def map_and_rename_columns(
  #   except Exception:
   #      pass
 #
+
 
 
 
