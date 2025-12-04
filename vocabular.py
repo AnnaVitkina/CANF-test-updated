@@ -926,7 +926,7 @@ def map_and_rename_columns(
         
         if not delivery_col_found:
             output_df['Delivery Number'] = None
-            final_columns.append('Delivery Number')
+            final_columns.append('Delivery Number 1')
         
         shipment_id_col_found = False
         shipment_id_variations = ['Shipment ID', 'ShipmentID', 'shipment id', 'shipmentid', 
@@ -1228,6 +1228,7 @@ def map_and_rename_columns(
  #   except Exception:
   #      pass
 #
+
 
 
 
