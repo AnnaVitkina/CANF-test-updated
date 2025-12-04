@@ -263,12 +263,16 @@ EXCLUDED_COLUMNS = [
     'LC #',
     'LC#',
     'Carrier',
-    #'Delivery Number',
-    #'DeliveryNumber',
+    'Delivery Number',
+    'DeliveryNumber',
     'Lane #',
     'DELIVERY_NUMBER',
     'DELIVERY NUMBER(s)',
-    'SHIPMENT_ID'
+    'SHIPMENT_ID',
+    'Shipment ID',
+    'ShipmentID',
+    'shipment id',
+    'shipmentid'
 ]
 
 # Rate card columns that should not be mapped (kept as-is)
@@ -877,13 +881,13 @@ def map_and_rename_columns(
                 final_columns.append(rate_card_col)
         
         # Add key columns: LC #, ETOF #, Carrier, Delivery Number, Shipment ID
-        key_columns_to_find = ['ETOF #', 'ETOF#', 'LC #', 'LC#', 'Carrier', 'Delivery Number', 'DeliveryNumber', 
-                              'Shipment ID', 'ShipmentID', 'shipment id', 'shipmentid', 'SHIPMENT_ID', 'DELIVERY_NUMBER','DELIVERY NUMBER(s)', 'delivery_number', 'delivery number(s)', 'deliverynumber', 'deliverynumber(s)']
+        key_columns_to_find = ['ETOF #','LC #', 'carrier', 'carrier_name', 'shipment_id',
+                              'delivery_number', 'deliverynumber(s)']
         for key_col in key_columns_to_find:
             # Find the column (case-insensitive, handle variations)
             for col in output_df.columns:
                 col_normalized = col.lower().replace(' ', '').replace('#', '#')
-                key_normalized = key_col.lower().replace(' ', '').replace('#', '#').replace('_', '').replace('(s)','')
+                key_normalized = key_col.lower().replace(' ', '').replace('#', '#'))
                 if col_normalized == key_normalized:
                     if col not in final_columns:
                         final_columns.append(col)
@@ -1193,115 +1197,7 @@ def map_and_rename_columns(
             f.write(f"  {rate_card_col} <- {lc_col}\n")
         f.write("\nOrigin Mappings:\n")
         for rate_card_col, origin_col in origin_mappings.items():
-            f.write(f"  {rate_card_col} <- {origin_col}\n")
-    
-    # Step 7.5: Fill empty "Delivery Number" in LC from ETOF "Delivery Number(s)"
-    if lc_df_renamed is not None and etof_df_renamed is not None:
-        print("\nStep 7.5. Filling empty LC Delivery Number from ETOF Delivery Number(s)...")
-        
-        # Find ETOF # column in both dataframes for matching
-        lc_etof_col = None
-        etof_etof_col = None
-        etof_patterns = ['ETOF #', 'ETOF#', 'etof #', 'etof#']
-        
-        for col in lc_df_renamed.columns:
-            col_str = str(col).strip()
-            col_lower = col_str.lower().replace(' ', '')
-            for pattern in etof_patterns:
-                if col_lower == pattern.lower().replace(' ', '') or col_str == pattern:
-                    lc_etof_col = col
-                    break
-            if lc_etof_col:
-                break
-        
-        for col in etof_df_renamed.columns:
-            col_str = str(col).strip()
-            col_lower = col_str.lower().replace(' ', '')
-            for pattern in etof_patterns:
-                if col_lower == pattern.lower().replace(' ', '') or col_str == pattern:
-                    etof_etof_col = col
-                    break
-            if etof_etof_col:
-                break
-        
-        # Find "Delivery Number(s)" in ETOF dataframe
-        etof_delivery_col = None
-        etof_delivery_patterns = ['DELIVERY NUMBER(s)', 'Delivery Number(s)', 'delivery number(s)', 
-                                  'DELIVERY NUMBER (s)', 'Delivery Number (s)', 'Delivery Number']
-        for col in etof_df_renamed.columns:
-            col_str = str(col).strip()
-            for pattern in etof_delivery_patterns:
-                if col_str == pattern or col_str.lower() == pattern.lower():
-                    etof_delivery_col = col
-                    break
-            if etof_delivery_col:
-                break
-        
-        # Find "Delivery Number" in LC dataframe
-        lc_delivery_col = None
-        lc_delivery_patterns = ['Delivery Number', 'DELIVERY_NUMBER', 'delivery number', 'DELIVERY NUMBER', 'Delivery Number']
-        for col in lc_df_renamed.columns:
-            col_str = str(col).strip()
-            col_lower = col_str.lower().replace(' ', '').replace('_', '')
-            for pattern in lc_delivery_patterns:
-                pattern_lower = pattern.lower().replace(' ', '').replace('_', '')
-                if col_lower == pattern_lower or ('delivery' in col_lower and 'number' in col_lower):
-                    lc_delivery_col = col
-                    break
-            if lc_delivery_col:
-                break
-        
-        if lc_etof_col and etof_etof_col and etof_delivery_col and lc_delivery_col:
-            # Create mapping from ETOF # to Delivery Number(s) from ETOF dataframe
-            etof_delivery_mapping = {}
-            for idx, row in etof_df_renamed.iterrows():
-                etof_num = row.get(etof_etof_col)
-                delivery_num = row.get(etof_delivery_col)
-                
-                if pd.notna(etof_num) and pd.notna(delivery_num):
-                    etof_num_str = str(etof_num).strip()
-                    delivery_num_str = str(delivery_num).strip()
-                    if etof_num_str and delivery_num_str and delivery_num_str.lower() != 'nan':
-                        etof_delivery_mapping[etof_num_str] = delivery_num_str
-            
-            # Fill empty Delivery Number in LC dataframe based on ETOF # match
-            filled_count = 0
-            for idx, row in lc_df_renamed.iterrows():
-                lc_etof_num = row.get(lc_etof_col)
-                current_delivery = row.get(lc_delivery_col)
-                
-                # Only fill if current delivery number is empty/NaN
-                if pd.isna(current_delivery) or (isinstance(current_delivery, str) and current_delivery.strip().lower() in ['', 'nan', 'none']):
-                    if pd.notna(lc_etof_num):
-                        lc_etof_num_str = str(lc_etof_num).strip()
-                        if lc_etof_num_str in etof_delivery_mapping:
-                            lc_df_renamed.at[idx, lc_delivery_col] = etof_delivery_mapping[lc_etof_num_str]
-                            filled_count += 1
-            
-            print(f"   Filled Delivery Number for {filled_count} rows in LC dataframe from ETOF")
-            
-            # Show statistics
-            total_lc_rows = len(lc_df_renamed)
-            lc_rows_with_delivery = len(lc_df_renamed[lc_df_renamed[lc_delivery_col].notna()])
-            print(f"   LC Delivery Number statistics:")
-            print(f"     Total rows: {total_lc_rows}")
-            print(f"     Rows with Delivery Number (after fill): {lc_rows_with_delivery}")
-        else:
-            missing_cols = []
-            if not lc_etof_col:
-                missing_cols.append("LC ETOF #")
-            if not etof_etof_col:
-                missing_cols.append("ETOF ETOF #")
-            if not etof_delivery_col:
-                missing_cols.append("ETOF Delivery Number(s)")
-            if not lc_delivery_col:
-                missing_cols.append("LC Delivery Number")
-            if missing_cols:
-                print(f"   Warning: Could not fill Delivery Number - missing columns: {', '.join(missing_cols)}")
-    
-    
-    
-    
+            f.write(f"  {rate_card_col} <- {origin_col}\n")    
     
     # Step 8: Save dataframes to Excel file
     excel_output_path = output_folder / "vocabulary_mapping.xlsx"
@@ -1341,6 +1237,7 @@ def map_and_rename_columns(
  #   except Exception:
   #      pass
 #
+
 
 
 
