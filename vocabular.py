@@ -235,7 +235,7 @@ def is_shipment_id_column(column_name):
     """Check if column is related to SHIPMENT_ID/delivery number/etof #/lc#."""
     shipment_keywords = ['shipment', 'shipment_id', 'shipment id', 'delivery', 'delivery number', 
                          'delivery_number', 'etof', 'etof #', 'etof#', 'lc', 'lc #', 'lc#', 
-                         'order file', 'order_file', 'DELIVERY_NUMBER', 'DELIVERY NUMBER(s)']
+                         'order file', 'order_file', 'DELIVERY_NUMBER', 'DELIVERY NUMBER(s)', 'delivery number(s)']
     col_lower = column_name.lower()
     return any(keyword in col_lower for keyword in shipment_keywords)
 
@@ -263,11 +263,11 @@ EXCLUDED_COLUMNS = [
     'LC #',
     'LC#',
     'Carrier',
-    'Delivery Number',
-    'DeliveryNumber',
+    #'Delivery Number',
+    #'DeliveryNumber',
     'Lane #',
-    'DELIVERY_NUMBER',
-    'DELIVERY NUMBER(s)'
+    #'DELIVERY_NUMBER',
+    #'DELIVERY NUMBER(s)'
 ]
 
 # Rate card columns that should not be mapped (kept as-is)
@@ -866,7 +866,7 @@ def map_and_rename_columns(
         
         # Add key columns: LC #, ETOF #, Carrier, Delivery Number, Shipment ID
         key_columns_to_find = ['ETOF #', 'ETOF#', 'LC #', 'LC#', 'Carrier', 'Delivery Number', 'DeliveryNumber', 
-                              'Shipment ID', 'ShipmentID', 'shipment id', 'shipmentid', 'SHIPMENT_ID', 'DELIVERY_NUMBER','DELIVERY NUMBER(s)']
+                              'Shipment ID', 'ShipmentID', 'shipment id', 'shipmentid', 'SHIPMENT_ID', 'DELIVERY_NUMBER','DELIVERY NUMBER(s)', 'delivery_number', 'delivery number(s)', 'deliverynumber', 'deliverynumber(s)']
         for key_col in key_columns_to_find:
             # Find the column (case-insensitive, handle variations)
             for col in output_df.columns:
@@ -904,7 +904,7 @@ def map_and_rename_columns(
         
         delivery_col_found = False
         delivery_variations = ['Delivery Number', 'DeliveryNumber', 'delivery number', 'deliverynumber', 
-                              'Delivery', 'delivery', 'DELIVERY', 'DELIVERY_NUMBER', 'DELIVERY NUMBER(s)']
+                              'Delivery', 'delivery', 'DELIVERY', 'DELIVERY_NUMBER', 'DELIVERY NUMBER(s)','delivery_number', 'delivery_number', 'delivery number(s)', 'deliverynumber(s)']
         
         for col in output_df.columns:
             col_str = str(col).strip()
@@ -1084,7 +1084,7 @@ def map_and_rename_columns(
                     break
             
             # Find Delivery Number columns
-            delivery_variations = ['Delivery Number', 'DeliveryNumber', 'delivery number', 'deliverynumber', 'DELIVERY_NUMBER', 'DELIVERY NUMBER(s)']
+            delivery_variations = ['Delivery Number', 'DeliveryNumber', 'delivery number', 'deliverynumber', 'DELIVERY_NUMBER', 'DELIVERY NUMBER(s)','delivery_number','delivery number(s)','delivery number(s)']
             for col in etof_df_renamed.columns:
                 col_str = str(col).strip()
                 if col_str in delivery_variations or 'delivery' in col_str.lower() and 'number' in col_str.lower():
@@ -1221,5 +1221,6 @@ def map_and_rename_columns(
  #   except Exception:
   #      pass
 #
+
 
 
