@@ -235,7 +235,7 @@ def is_shipment_id_column(column_name):
     """Check if column is related to SHIPMENT_ID/delivery number/etof #/lc#."""
     shipment_keywords = ['shipment', 'shipment_id', 'shipment id', 'delivery', 'delivery number', 
                          'delivery_number', 'etof', 'etof #', 'etof#', 'lc', 'lc #', 'lc#', 
-                         'order file', 'order_file', 'DELIVERY_NUMBER']
+                         'order file', 'order_file', 'DELIVERY_NUMBER', 'DELIVERY NUMBER(s)']
     col_lower = column_name.lower()
     return any(keyword in col_lower for keyword in shipment_keywords)
 
@@ -263,11 +263,12 @@ EXCLUDED_COLUMNS = [
     'LC #',
     'LC#',
     'Carrier',
+    'Delivery Number',
+    'DeliveryNumber',
     'Lane #',
     'DELIVERY_NUMBER',
     'DELIVERY NUMBER(s)'
 ]
-# Note: Delivery Number is NOT excluded - it will be extracted and renamed appropriately
 
 # Rate card columns that should not be mapped (kept as-is)
 RATE_CARD_EXCLUDED_COLUMNS = [
@@ -300,7 +301,8 @@ def is_excluded_column(column_name):
                 return True
             if excluded_lower == 'carrier' and col_lower == 'carrier':
                 return True
-            # Note: Delivery Number is no longer excluded - it will be extracted and renamed
+            if 'delivery' in excluded_lower and 'delivery' in col_lower and 'number' in col_lower:
+                return True
     
     return False
 
@@ -680,7 +682,7 @@ def map_and_rename_columns(
     
     # Columns to always keep (even if not in rate card)
     keep_columns = ['ETOF #', 'ETOF#', 'LC #', 'LC#', 'Carrier', 'Delivery Number', 'DeliveryNumber', 
-                   'Shipment ID', 'ShipmentID', 'shipment id', 'shipmentid', 'SHIPMENT_ID']
+                   'Shipment ID', 'ShipmentID', 'shipment id', 'shipmentid', 'SHIPMENT_ID', 'DELIVERY_NUMBER', 'DELIVERY NUMBER(s)']
     
     # Mapping results
     mapping_results = []
@@ -862,9 +864,9 @@ def map_and_rename_columns(
             if rate_card_col in output_df.columns:
                 final_columns.append(rate_card_col)
         
-        # Add key columns: LC #, ETOF #, Carrier, Shipment ID
-        key_columns_to_find = ['ETOF #', 'ETOF#', 'LC #', 'LC#', 'Carrier', 
-                              'Shipment ID', 'ShipmentID', 'shipment id', 'shipmentid', 'SHIPMENT_ID']
+        # Add key columns: LC #, ETOF #, Carrier, Delivery Number, Shipment ID
+        key_columns_to_find = ['ETOF #', 'ETOF#', 'LC #', 'LC#', 'Carrier', 'Delivery Number', 'DeliveryNumber', 
+                              'Shipment ID', 'ShipmentID', 'shipment id', 'shipmentid', 'SHIPMENT_ID', 'DELIVERY_NUMBER','DELIVERY NUMBER(s)']
         for key_col in key_columns_to_find:
             # Find the column (case-insensitive, handle variations)
             for col in output_df.columns:
@@ -874,12 +876,6 @@ def map_and_rename_columns(
                     if col not in final_columns:
                         final_columns.append(col)
                     break
-        
-        # Add Delivery Number columns: DELIVERY_NUMBER (from LC) or DELIVERY NUMBER(s) (from ETOF)
-        delivery_cols_to_find = ['DELIVERY_NUMBER', 'DELIVERY NUMBER(s)']
-        for delivery_col in delivery_cols_to_find:
-            if delivery_col in output_df.columns and delivery_col not in final_columns:
-                final_columns.append(delivery_col)
         
         # Add source-specific columns: Loading date (ETOF) or SHIP_DATE (LC)
         for specific_col in specific_keep_list:
@@ -906,15 +902,24 @@ def map_and_rename_columns(
             output_df['Carrier'] = None
             final_columns.append('Carrier')
         
-        # Check if delivery number column exists (DELIVERY_NUMBER from LC or DELIVERY NUMBER(s) from ETOF)
         delivery_col_found = False
-        delivery_cols_to_check = ['DELIVERY_NUMBER', 'DELIVERY NUMBER(s)']
+        delivery_variations = ['Delivery Number', 'DeliveryNumber', 'delivery number', 'deliverynumber', 
+                              'Delivery', 'delivery', 'DELIVERY', 'DELIVERY_NUMBER', 'DELIVERY NUMBER(s)']
+        
         for col in output_df.columns:
-            if col in delivery_cols_to_check:
-                delivery_col_found = True
+            col_str = str(col).strip()
+            col_lower = col_str.lower().replace(' ', '').replace('_', '')
+            for variation in delivery_variations:
+                var_lower = variation.lower().replace(' ', '').replace('_', '')
+                if col_lower == var_lower or ('delivery' in col_lower and 'number' in col_lower):
+                    delivery_col_found = True
+                    break
+            if delivery_col_found:
                 break
         
-        # Note: We don't create empty delivery number columns - they should come from source files
+        if not delivery_col_found:
+            output_df['Delivery Number'] = None
+            final_columns.append('Delivery Number')
         
         shipment_id_col_found = False
         shipment_id_variations = ['Shipment ID', 'ShipmentID', 'shipment id', 'shipmentid', 
@@ -951,21 +956,6 @@ def map_and_rename_columns(
             lc_df, lc_mappings, 'LC', keep_columns, lc_specific_keep, all_rate_card_cols_for_output
         )
         
-        # Extract and rename delivery number from LC: rename to "DELIVERY_NUMBER"
-        if lc_df_renamed is not None and not lc_df_renamed.empty:
-            delivery_patterns = ['DELIVERY_NUMBER', 'Delivery Number', 'DeliveryNumber', 'delivery number', 
-                               'deliverynumber', 'Delivery', 'delivery', 'DELIVERY']
-            for col in lc_df_renamed.columns:
-                col_str = str(col).strip()
-                col_lower = col_str.lower().replace(' ', '').replace('_', '')
-                for pattern in delivery_patterns:
-                    pattern_lower = pattern.lower().replace(' ', '').replace('_', '')
-                    if col_lower == pattern_lower or ('delivery' in col_lower and 'number' in col_lower):
-                        if col != 'DELIVERY_NUMBER':
-                            lc_df_renamed = lc_df_renamed.rename(columns={col: 'DELIVERY_NUMBER'})
-                            print(f"   Renamed LC delivery number column '{col}' to 'DELIVERY_NUMBER'")
-                        break
-        
         # Print LC column list
         if lc_df_renamed is not None and not lc_df_renamed.empty:
             print(f"\n   LC DataFrame Columns ({len(lc_df_renamed.columns)}):")
@@ -978,21 +968,6 @@ def map_and_rename_columns(
         origin_df_renamed = create_output_dataframe(
             origin_df, origin_mappings, 'Origin', keep_columns, origin_specific_keep, all_rate_card_cols_for_output
         )
-    
-    # Extract and rename delivery number from ETOF (only if LC is not provided)
-    if lc_df_renamed is None and etof_df_renamed is not None and not etof_df_renamed.empty:
-        delivery_patterns = ['DELIVERY_NUMBER', 'Delivery Number', 'DeliveryNumber', 'delivery number', 
-                           'deliverynumber', 'Delivery', 'delivery', 'DELIVERY']
-        for col in etof_df_renamed.columns:
-            col_str = str(col).strip()
-            col_lower = col_str.lower().replace(' ', '').replace('_', '')
-            for pattern in delivery_patterns:
-                pattern_lower = pattern.lower().replace(' ', '').replace('_', '')
-                if col_lower == pattern_lower or ('delivery' in col_lower and 'number' in col_lower):
-                    if col != 'DELIVERY NUMBER(s)':
-                        etof_df_renamed = etof_df_renamed.rename(columns={col: 'DELIVERY NUMBER(s)'})
-                        print(f"   Renamed ETOF delivery number column '{col}' to 'DELIVERY NUMBER(s)'")
-                    break
     
     # Step 4.5: Fill LC Carrier column from ETOF Carrier ID
     if lc_df_renamed is not None and etof_df_renamed is not None:
@@ -1109,7 +1084,7 @@ def map_and_rename_columns(
                     break
             
             # Find Delivery Number columns
-            delivery_variations = ['Delivery Number', 'DeliveryNumber', 'delivery number', 'deliverynumber', 'DELIVERY_NUMBER']
+            delivery_variations = ['Delivery Number', 'DeliveryNumber', 'delivery number', 'deliverynumber', 'DELIVERY_NUMBER', 'DELIVERY NUMBER(s)']
             for col in etof_df_renamed.columns:
                 col_str = str(col).strip()
                 if col_str in delivery_variations or 'delivery' in col_str.lower() and 'number' in col_str.lower():
@@ -1182,7 +1157,6 @@ def map_and_rename_columns(
         except Exception:
             pass
     
-    print("Done")
     # Step 7: Save mapping to txt file
     from pathlib import Path
     output_folder = Path(__file__).parent / "partly_df"
@@ -1231,21 +1205,20 @@ def map_and_rename_columns(
 #if __name__ == "__main__":
 #    try:
         # Main function: Map and rename columns
- #       etof_renamed, lc_renamed, origin_renamed = map_and_rename_columns(
-  #          rate_card_file_path="rate_resmed.xlsx",
- #           etof_file_path="etofs_02.12.2025 lagermax (1).xlsx",
+#        etof_renamed, lc_renamed, origin_renamed = map_and_rename_columns(
+#            rate_card_file_path="rate_dairb.xlsx",
+ #           etof_file_path="etofs_dairb.xlsx",
             #origin_file_path="file_dairb.xlsx",
             #origin_header_row=16,
             #origin_end_column=33,
             #order_files_path="Order_files_export.xls.xlsx",
- #           lc_input_path="LC_Lagermax_AT_Week_43_GS_S_2025_1 (1).xml",
- #           output_txt_path="column_mapping_results.txt",
+#            lc_input_path="LC_Bollore ES (EUR)_ADSESPR03Bollore_ADS_Airfreight_ES_202509_CDP_I250014731_.xml",
+#            output_txt_path="column_mapping_results.txt",
  #           ignore_rate_card_columns=["Business Unit Name", "Remark"],
- #          shipper_id="dairb"  # Custom logic: maps "SHAI Reference" to "SHIPMENT_ID" for dairb
- #       )
+ #           shipper_id="dairb"  # Custom logic: maps "SHAI Reference" to "SHIPMENT_ID" for dairb
+  #      )
         
  #   except Exception:
- #       pass
+  #      pass
 #
-
 
