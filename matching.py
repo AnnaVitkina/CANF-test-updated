@@ -383,7 +383,7 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                 unique_rc_orig_dest_combinations.add((orig, dest))
     
     # Initialize a new 'comment' column in df_etofs
-    df_etofs['Comments'] = ''
+    #df_etofs['Comments'] = ''
     
     # Iterate through each row of df_etofs
     for index_etofs, row_etofs in df_etofs.iterrows():
@@ -1088,4 +1088,5 @@ def run_matching(rate_card_file_path=None):
     print("="*80)
     
     return output_file
+
 
