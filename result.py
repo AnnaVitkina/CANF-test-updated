@@ -794,7 +794,7 @@ if __name__ == "__main__":
     print(f"📁 Created output folder: {output_dir}")
 
     print("🚀 Launching Gradio interface for Google Colab (local access)...")
-    demo.launch(share=False, debug=True, show_error=True)
+        demo.launch(share=False, debug=True, show_error=True)
     
     # Check if running in Colab
     #in_colab = 'google.colab' in sys.modules
@@ -815,6 +815,7 @@ if __name__ == "__main__":
         print(f"💡 Input files will be saved to: {input_dir}")
         print(f"💡 Output files will be saved to: {output_dir}")
         demo.launch(server_name="127.0.0.1", share=False)
+
 
 
 
