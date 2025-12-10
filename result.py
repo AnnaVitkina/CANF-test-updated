@@ -801,8 +801,6 @@ if __name__ == "__main__":
     
     if in_colab:
         use_share = False  # Change to True if you prefer public URL
-        print("🚀 Launching Gradio interface for Google Colab (local access)...")
-            demo.launch(share=False, debug=True, show_error=True)
         if use_share:
             print("🚀 Launching Gradio interface for Google Colab (public URL)...")
             #demo.launch(share=True, debug=False, show_error=True)
@@ -815,6 +813,7 @@ if __name__ == "__main__":
         print(f"💡 Input files will be saved to: {input_dir}")
         print(f"💡 Output files will be saved to: {output_dir}")
         demo.launch(server_name="127.0.0.1", share=False)
+
 
 
 
