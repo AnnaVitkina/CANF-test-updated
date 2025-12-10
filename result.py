@@ -792,25 +792,30 @@ if __name__ == "__main__":
     os.makedirs(output_dir, exist_ok=True)
     print(f"📁 Created input folder: {input_dir}")
     print(f"📁 Created output folder: {output_dir}")
+
+    print("🚀 Launching Gradio interface for Google Colab (local access)...")
+    demo.launch(share=False, debug=True, show_error=True)
     
     # Check if running in Colab
-    in_colab = 'google.colab' in sys.modules
+    #in_colab = 'google.colab' in sys.modules
     
-    if in_colab:
-        use_share = False  # Change to True if you prefer public URL
-        
-        if use_share:
-            print("🚀 Launching Gradio interface for Google Colab (public URL)...")
-            demo.launch(share=True, debug=False, show_error=True)
-        else:
-            print("🚀 Launching Gradio interface for Google Colab (local access)...")
-            demo.launch(share=True, debug=True, show_error=True)
+    #if in_colab:
+        #use_share = False  # Change to True if you prefer public URL
+        #print("🚀 Launching Gradio interface for Google Colab (local access)...")
+            demo.launch(share=False, debug=True, show_error=True)
+        #if use_share:
+            #print("🚀 Launching Gradio interface for Google Colab (public URL)...")
+            #demo.launch(share=True, debug=False, show_error=True)
+        #else:
+            #print("🚀 Launching Gradio interface for Google Colab (local access)...")
+            #demo.launch(share=False, debug=True, show_error=True)
     else:
         # For local execution
         print("🚀 Launching Gradio interface locally...")
         print(f"💡 Input files will be saved to: {input_dir}")
         print(f"💡 Output files will be saved to: {output_dir}")
         demo.launch(server_name="127.0.0.1", share=False)
+
 
 
 
