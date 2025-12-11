@@ -1,5 +1,6 @@
 import os
 import shutil
+import gradio as gr
 
 def clean_folder(folder_path):
     """
@@ -56,3 +57,5 @@ def clean_input_and_output_folders():
 # Example usage:
 if __name__ == "__main__":
     clean_input_and_output_folders()
+    gr.close_all()
+
