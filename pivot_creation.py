@@ -1,9 +1,23 @@
 import pandas as pd
 import os
 import glob
+import re
+from collections import Counter
 
 def clean_comment_line(line):
-    """Clean a single comment line by normalizing date comments and removing unwanted lines."""
+    """
+    Clean a single comment line by normalizing to patterns (removing specific values).
+    
+    Examples:
+        "Destination Postal Code: Shipment value '12230' needs to be changed to '43300'"
+        -> "Destination Postal Code: Shipment value needs to be changed"
+        
+        "Origin Country: Shipment value 'US' needs to be changed to 'USA'"
+        -> "Origin Country: Shipment value needs to be changed"
+        
+        "Date '20241201' is outside valid date range..."
+        -> "Date is outside valid date range..."
+    """
     if pd.isna(line) or line == '':
         return None
     line_stripped = str(line).strip()
@@ -12,19 +26,151 @@ def clean_comment_line(line):
     if line_stripped.startswith('Discrepancies for Match'):
         return None
     
-    # Normalize date comments to base form (remove specific date value for counting)
-    # Pattern: "Date 'YYYYMMDD' is outside valid date range..." -> "Date is outside valid date range..."
-    import re
+    # Skip lines about "possible rate lanes"
+    if 'possible rate lanes' in line_stripped.lower():
+        return None
+    
+    # Pattern 1: "Field: Shipment value 'X' needs to be changed to 'Y'"
+    # -> "Field: Shipment value needs to be changed"
+    match = re.match(r"^(.+?):\s*Shipment value\s*'[^']*'\s*needs to be changed to\s*'[^']*'\.?$", line_stripped)
+    if match:
+        field_name = match.group(1).strip()
+        return f"{field_name}: Shipment value needs to be changed"
+    
+    # Pattern 2: "Field: Rate Card value 'X' - Shipment has 'Y'"
+    # -> "Field: Rate Card value differs from Shipment"
+    match = re.match(r"^(.+?):\s*Rate Card value\s*'[^']*'\s*-\s*Shipment has\s*'[^']*'\.?$", line_stripped)
+    if match:
+        field_name = match.group(1).strip()
+        return f"{field_name}: Rate Card value differs from Shipment"
+    
+    # Pattern 3: "Field: needs to be changed from 'X' to 'Y'"
+    # -> "Field: needs to be changed"
+    match = re.match(r"^(.+?):\s*needs to be changed from\s*'[^']*'\s*to\s*'[^']*'\.?$", line_stripped)
+    if match:
+        field_name = match.group(1).strip()
+        return f"{field_name}: needs to be changed"
+    
+    # Pattern 4: Normalize date comments
+    # "Date 'YYYYMMDD' is outside valid date range..." -> "Date is outside valid date range..."
     if "Date '" in line_stripped and "is outside valid date range" in line_stripped:
-        # Always return the base form for date comments
         if "for all matching rate card entries" in line_stripped:
             return "Date is outside valid date range for all matching rate card entries"
         else:
-            # For other date comment variations, remove the date part
             cleaned_line = re.sub(r"Date '[^']+'", "Date", line_stripped)
             return cleaned_line
     
-    return line_stripped
+    # Pattern 5: Generic - remove any quoted values from the line
+    # This catches other patterns we might have missed
+    cleaned = re.sub(r"'[^']*'", "", line_stripped)
+    # Clean up extra spaces
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    # Clean up phrases like "needs to be changed to" -> "needs to be changed"
+    cleaned = re.sub(r'needs to be changed to\s*$', 'needs to be changed', cleaned)
+    cleaned = re.sub(r'needs to be changed to\s*\.', 'needs to be changed.', cleaned)
+    
+    return cleaned
+
+
+def extract_discrepancy_field(comment):
+    """
+    Extract the field/column name from a discrepancy comment.
+    Examples:
+        "Origin Postal Code: Shipment value '19454' needs to be changed to '19454413'" -> "Origin Postal Code"
+        "Destination Country: Shipment value 'US' needs to be changed to 'USA'" -> "Destination Country"
+        "Please recheck the shipment details" -> "General"
+    """
+    if pd.isna(comment) or comment == '':
+        return None
+    
+    comment_str = str(comment).strip()
+    
+    # Skip pattern analysis lines
+    if comment_str.startswith('Discrepancies for Match'):
+        return None
+    if 'possible rate lanes' in comment_str.lower():
+        return None
+    
+    # Pattern 1: "Field Name: Shipment value..." or "Field Name: needs to be changed..."
+    match = re.match(r'^([^:]+):\s*(Shipment value|needs to be changed|Rate Card value)', comment_str)
+    if match:
+        return match.group(1).strip()
+    
+    # Pattern 2: "Field Name: value..." (generic colon pattern)
+    if ':' in comment_str:
+        field = comment_str.split(':')[0].strip()
+        # Only return if it looks like a field name (not too long, no sentences)
+        if len(field) < 50 and not any(word in field.lower() for word in ['please', 'recheck', 'shipment', 'too many']):
+            return field
+    
+    # Pattern 3: Check for known generic messages
+    generic_patterns = [
+        'Please recheck the shipment details',
+        'Too many shipment details to update',
+        'Date is outside valid date range',
+        'No matching rate card'
+    ]
+    for pattern in generic_patterns:
+        if pattern.lower() in comment_str.lower():
+            return pattern
+    
+    return "Other"
+
+
+def analyze_discrepancy_patterns(comments_list):
+    """
+    Analyze a list of comments to find the most common discrepancy patterns.
+    
+    Returns:
+        dict with pattern analysis results:
+        - field_counts: Counter of field occurrences
+        - dominant_field: Most common field (if any)
+        - dominant_percentage: Percentage of dominant field
+        - pattern_summary: List of (field, count, percentage) tuples
+    """
+    field_counts = Counter()
+    
+    for comment in comments_list:
+        if pd.isna(comment) or comment == '':
+            continue
+        
+        # Split multi-line comments
+        lines = str(comment).split('\n')
+        for line in lines:
+            field = extract_discrepancy_field(line)
+            if field:
+                field_counts[field] += 1
+    
+    total = sum(field_counts.values())
+    if total == 0:
+        return {
+            'field_counts': field_counts,
+            'dominant_field': None,
+            'dominant_percentage': 0,
+            'pattern_summary': []
+        }
+    
+    # Calculate percentages and sort
+    pattern_summary = []
+    for field, count in field_counts.most_common():
+        percentage = (count / total) * 100
+        pattern_summary.append((field, count, percentage))
+    
+    # Determine dominant field (>30% of all discrepancies)
+    dominant_field = None
+    dominant_percentage = 0
+    if pattern_summary:
+        top_field, top_count, top_pct = pattern_summary[0]
+        if top_pct >= 30:  # Considered dominant if >= 30%
+            dominant_field = top_field
+            dominant_percentage = top_pct
+    
+    return {
+        'field_counts': field_counts,
+        'dominant_field': dominant_field,
+        'dominant_percentage': dominant_percentage,
+        'pattern_summary': pattern_summary
+    }
 
 def update_canf_file(matching_output_file=None,
                      shipper_value=None):
@@ -126,8 +272,58 @@ def update_canf_file(matching_output_file=None,
                 # Reorder columns: Shipper Value, Carrier, Cause of CANF, Amount
                 google_sheets_data = google_sheets_data[['Shipper Value', 'Carrier', 'Cause of CANF', 'Amount']]
                 google_sheets_data = google_sheets_data.sort_values(['Carrier', 'Cause of CANF'])
+                
+                # ========== PATTERN ANALYSIS ==========
+                # Analyze overall discrepancy patterns
+                all_comments = df_etofs[comment_col].dropna().tolist()
+                overall_patterns = analyze_discrepancy_patterns(all_comments)
+                
+                # Create Pattern Summary DataFrame
+                pattern_rows = []
+                for field, count, percentage in overall_patterns['pattern_summary']:
+                    pattern_rows.append({
+                        'Discrepancy Field': field,
+                        'Count': count,
+                        'Percentage': f"{percentage:.1f}%",
+                        'Is Dominant': 'YES' if field == overall_patterns['dominant_field'] else ''
+                    })
+                pattern_summary_df = pd.DataFrame(pattern_rows)
+                
+                # Analyze patterns PER CARRIER
+                carrier_pattern_rows = []
+                for carrier in df_etofs['Carrier'].dropna().unique():
+                    carrier_comments = df_etofs[df_etofs['Carrier'] == carrier][comment_col].dropna().tolist()
+                    carrier_patterns = analyze_discrepancy_patterns(carrier_comments)
+                    
+                    for field, count, percentage in carrier_patterns['pattern_summary'][:5]:  # Top 5 per carrier
+                        carrier_pattern_rows.append({
+                            'Carrier': carrier,
+                            'Discrepancy Field': field,
+                            'Count': count,
+                            'Percentage': f"{percentage:.1f}%",
+                            'Is Dominant': 'YES' if field == carrier_patterns['dominant_field'] else ''
+                        })
+                
+                carrier_patterns_df = pd.DataFrame(carrier_pattern_rows)
+                
+                # Print pattern analysis summary
+                print(f"\n{'='*60}")
+                print("DISCREPANCY PATTERN ANALYSIS")
+                print('='*60)
+                if overall_patterns['dominant_field']:
+                    print(f"  DOMINANT ISSUE: {overall_patterns['dominant_field']} ({overall_patterns['dominant_percentage']:.1f}%)")
+                else:
+                    print("  No single dominant issue found (discrepancies are diverse)")
+                print(f"\n  Top discrepancy fields:")
+                for field, count, percentage in overall_patterns['pattern_summary'][:10]:
+                    marker = " <<<" if field == overall_patterns['dominant_field'] else ""
+                    print(f"    - {field}: {count} ({percentage:.1f}%){marker}")
+                print('='*60)
+                
             else:
                 google_sheets_data = pd.DataFrame(columns=['Shipper Value', 'Carrier', 'Cause of CANF', 'Amount'])
+                pattern_summary_df = pd.DataFrame(columns=['Discrepancy Field', 'Count', 'Percentage', 'Is Dominant'])
+                carrier_patterns_df = pd.DataFrame(columns=['Carrier', 'Discrepancy Field', 'Count', 'Percentage', 'Is Dominant'])
 
             print(f"\nPrepared {len(google_sheets_data)} Carrier-Cause combinations.")
 
@@ -159,6 +355,13 @@ def update_canf_file(matching_output_file=None,
                     google_sheets_data = google_sheets_data.sort_values(['Carrier', 'Cause of CANF']).reset_index(drop=True)
                     google_sheets_data.to_excel(writer, sheet_name='Pivot Data', index=False)
                     
+                    # Add Pattern Summary sheet (overall patterns)
+                    pattern_summary_df.to_excel(writer, sheet_name='Pattern Summary', index=False)
+                    
+                    # Add Carrier Patterns sheet (patterns per carrier)
+                    if not carrier_patterns_df.empty:
+                        carrier_patterns_df.to_excel(writer, sheet_name='Carrier Patterns', index=False)
+                    
                     # Apply formatting if available
                     if FORMATTING_AVAILABLE:
                         workbook = writer.book
@@ -174,6 +377,10 @@ def update_canf_file(matching_output_file=None,
                                 header_fill = PatternFill(start_color="70AD47", end_color="70AD47", fill_type="solid")
                             elif sheet_name == 'Pivot Data':
                                 header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+                            elif sheet_name == 'Pattern Summary':
+                                header_fill = PatternFill(start_color="C65911", end_color="C65911", fill_type="solid")  # Orange
+                            elif sheet_name == 'Carrier Patterns':
+                                header_fill = PatternFill(start_color="7030A0", end_color="7030A0", fill_type="solid")  # Purple
                             else:
                                 # Default header color for other sheets
                                 header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
@@ -229,10 +436,45 @@ def update_canf_file(matching_output_file=None,
                                     for row in ws.iter_rows(min_row=2, min_col=comment_col_idx, max_col=comment_col_idx):
                                         for cell in row:
                                             cell.alignment = Alignment(wrap_text=True, vertical="top")
+                            
+                            elif sheet_name == 'Pattern Summary':
+                                # Highlight dominant rows
+                                dominant_fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")  # Light yellow
+                                for row in ws.iter_rows(min_row=2):
+                                    # Check if "Is Dominant" column has "YES"
+                                    if len(row) >= 4 and row[3].value == 'YES':
+                                        for cell in row:
+                                            cell.fill = dominant_fill
+                                            cell.font = Font(bold=True)
+                                
+                                # Set column widths
+                                ws.column_dimensions['A'].width = 40  # Discrepancy Field
+                                ws.column_dimensions['B'].width = 12  # Count
+                                ws.column_dimensions['C'].width = 12  # Percentage
+                                ws.column_dimensions['D'].width = 14  # Is Dominant
+                            
+                            elif sheet_name == 'Carrier Patterns':
+                                # Highlight dominant rows
+                                dominant_fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")  # Light green
+                                for row in ws.iter_rows(min_row=2):
+                                    # Check if "Is Dominant" column has "YES"
+                                    if len(row) >= 5 and row[4].value == 'YES':
+                                        for cell in row:
+                                            cell.fill = dominant_fill
+                                            cell.font = Font(bold=True)
+                                
+                                # Set column widths
+                                ws.column_dimensions['A'].width = 25  # Carrier
+                                ws.column_dimensions['B'].width = 40  # Discrepancy Field
+                                ws.column_dimensions['C'].width = 12  # Count
+                                ws.column_dimensions['D'].width = 12  # Percentage
+                                ws.column_dimensions['E'].width = 14  # Is Dominant
                 
                 print(f"\nSuccessfully updated file '{matching_output_file}'!")
                 print(f"  - Preserved {len(existing_sheets)} existing sheet(s)")
                 print(f"  - Added 'Pivot Data' sheet with {len(google_sheets_data)} rows")
+                print(f"  - Added 'Pattern Summary' sheet with {len(pattern_summary_df)} patterns")
+                print(f"  - Added 'Carrier Patterns' sheet with {len(carrier_patterns_df)} carrier-specific patterns")
 
             except Exception as e:
                 print(f"Error updating file: {str(e)}")
@@ -261,4 +503,3 @@ def update_canf_file(matching_output_file=None,
  #       matching_output_file=None,  # Will auto-detect Matched_Shipments_with.xlsx
  #       shipper_value=SHIPPER_VALUE
  #   )
-
