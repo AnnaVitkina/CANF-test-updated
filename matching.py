@@ -13,25 +13,34 @@ import os
 import re
 
 def normalize_value(value):
-    """Converts a value to lowercase string, removes spaces and underscores, and handles NaN."""
+    """Converts a value to lowercase string, removes spaces and underscores, and handles NaN.
+    Preserves leading zeros for postal codes and similar values."""
     if pd.isna(value):
         return None
 
-    # Attempt to convert to a number if it looks like one, then convert to int if possible
-    try:
-        # Convert to string first to handle cases like numbers stored as strings (e.g., '7719')
-        # and then to float for numeric conversion
-        num_val = float(str(value))
-        if num_val == int(num_val):  # Check if it's an integer number (e.g., 7719.0)
-            value = int(num_val)
-        else:  # Keep as float if it has decimal (e.g., 123.45)
-            value = num_val
-    except (ValueError, TypeError):
-        # Not a number, keep original value (which will be string or other type)
+    # Convert to string first
+    str_value = str(value).strip()
+    
+    # Check if value starts with '0' and has more digits - likely a postal code or code with leading zeros
+    # Don't convert to number to preserve leading zeros (e.g., "04123" should stay "04123", not become "4123")
+    if str_value.startswith('0') and len(str_value) > 1 and str_value.lstrip('0').isdigit():
+        # Preserve as string to keep leading zeros
         pass
+    else:
+        # Attempt to convert to a number if it looks like one, then convert to int if possible
+        try:
+            # Convert to float for numeric conversion
+            num_val = float(str_value)
+            if num_val == int(num_val):  # Check if it's an integer number (e.g., 7719.0)
+                str_value = str(int(num_val))
+            else:  # Keep as float if it has decimal (e.g., 123.45)
+                str_value = str(num_val)
+        except (ValueError, TypeError):
+            # Not a number, keep original value
+            pass
 
-    # Convert to string and apply lowercasing and cleaning
-    return str(value).lower().replace(" ", "").replace("_", "")
+    # Apply lowercasing and cleaning
+    return str_value.lower().replace(" ", "").replace("_", "")
 
 
 def normalize_column_name(col_name):
@@ -325,6 +334,66 @@ def find_common_columns(df_resmed, df_rate_card):
     return common_cols
 
 
+def analyze_discrepancy_patterns(all_discrepancies):
+    """
+    Analyze discrepancies to find common patterns.
+    
+    Args:
+        all_discrepancies: List of discrepancy dictionaries, each with 'column', 'etofs_value', 'rate_card_value'
+    
+    Returns:
+        tuple: (has_common_pattern, pattern_comment)
+            - has_common_pattern: True if there's a common pattern, False if all different
+            - pattern_comment: The summarized comment based on the pattern
+    """
+    if not all_discrepancies:
+        return False, "Please recheck the shipment details"
+    
+    # Group discrepancies by column name
+    column_counts = {}
+    column_discrepancies = {}
+    
+    for disc in all_discrepancies:
+        col = disc.get('column', 'Unknown')
+        if col not in column_counts:
+            column_counts[col] = 0
+            column_discrepancies[col] = []
+        column_counts[col] += 1
+        column_discrepancies[col].append(disc)
+    
+    total_discrepancies = len(all_discrepancies)
+    unique_columns = len(column_counts)
+    
+    # If all discrepancies are for the same column - clear pattern
+    if unique_columns == 1:
+        column_name = list(column_counts.keys())[0]
+        return True, f"{column_name}: Shipment value needs to be changed"
+    
+    # Check if one column dominates (has majority of discrepancies, at least 70%)
+    for col, count in column_counts.items():
+        if count / total_discrepancies >= 0.7:
+            return True, f"{col}: Shipment value needs to be changed (and {total_discrepancies - count} other minor discrepancies)"
+    
+    # Check if a few columns (2-3) cover most discrepancies (80%+)
+    sorted_columns = sorted(column_counts.items(), key=lambda x: x[1], reverse=True)
+    top_columns = []
+    covered_count = 0
+    
+    for col, count in sorted_columns[:3]:  # Check top 3 columns
+        top_columns.append(col)
+        covered_count += count
+        if covered_count / total_discrepancies >= 0.8:
+            break
+    
+    if len(top_columns) <= 3 and covered_count / total_discrepancies >= 0.8:
+        # Format: "Column1, Column2: Shipment values need to be changed"
+        columns_str = ", ".join(top_columns)
+        return True, f"{columns_str}: Shipment values need to be changed"
+    
+    # No clear pattern - all different
+    return False, "Please recheck the shipment details"
+
+
 def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_columns, conditions_dict=None):
     """Match ResMed shipments with Rate Card entries and identify discrepancies.
     
@@ -489,7 +558,17 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
             # Compare normalized values
             for col_norm in common_columns_normalized:
                 if col_norm in etofs_normalized_values and col_norm in rate_card_normalized_values:
-                    if etofs_normalized_values[col_norm] == rate_card_normalized_values[col_norm]:
+                    etofs_val = etofs_normalized_values[col_norm]
+                    rc_val = rate_card_normalized_values[col_norm]
+                    
+                    # Special handling for postal code columns - "starts with" matching
+                    is_postal_code_column = 'post' in col_norm.lower() or 'ship_post' in col_norm.lower() or 'cust_post' in col_norm.lower()
+                    
+                    if is_postal_code_column and etofs_val and rc_val:
+                        # For postal codes: count as match if shipment starts with rate card value
+                        if str(etofs_val).startswith(str(rc_val)):
+                            current_matches += 1
+                    elif etofs_val == rc_val:
                         current_matches += 1
             
             # Update best matches
@@ -499,9 +578,8 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
             elif current_matches == max_matches and current_matches > 0:  # Only append if there's at least one match
                 best_matching_rate_card_rows.append({'rate_card_row': row_rate_card.to_dict(), 'discrepancies': []})
         
-        # Check if more than 4 possible matches
-        if len(best_matching_rate_card_rows) > 4:
-            comments_for_current_etofs_row.append("Please recheck the shipment details. Too many possible rate lanes cab ne applied with changes.")
+        # Track if we have too many matches (will be analyzed after discrepancies are collected)
+        too_many_matches = len(best_matching_rate_card_rows) > 4
         
         # Only proceed with date validation and discrepancy checking if we have matches
         if len(best_matching_rate_card_rows) == 0:
@@ -606,8 +684,18 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                 normalized_etofs_val = normalize_value(etofs_val)
                 normalized_rate_card_val = normalize_value(rate_card_val)
                 
+                # Special handling for postal code columns - check "starts with" instead of exact match
+                is_postal_code_column = 'post' in col_norm.lower() or 'ship_post' in col_norm.lower() or 'cust_post' in col_norm.lower() or 'postal' in col_norm.lower()
+                                
                 # Only report discrepancy if normalized values are different
                 if normalized_etofs_val != normalized_rate_card_val:
+                    # For postal codes: check "starts with" instead of exact match
+                    if is_postal_code_column and normalized_etofs_val and normalized_rate_card_val:
+                        # For postal codes: shipment value should START WITH rate card value
+                        # Example: RC has "194", shipment has "19454" -> OK (starts with "194")
+                        if str(normalized_etofs_val).startswith(str(normalized_rate_card_val)):
+                            continue  # No discrepancy - postal code matches (starts with)
+                    
                     # Check if ResMed value satisfies the condition for this rate card value
                     is_valid, matching_condition = check_value_against_conditions(
                         etofs_val, rate_card_val, etofs_original_col, conditions_dict
@@ -628,17 +716,32 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                         })
             best_match_info['discrepancies'] = discrepancies
         
-        # Check if more than 4 changes (discrepancies) across all matches
-        total_discrepancies = sum(len(match['discrepancies']) for match in best_matching_rate_card_rows)
-        if total_discrepancies > 5:
+        # Check if any single match has more than 5 fields to update (discrepancies)
+        has_too_many_fields_to_update = any(len(match['discrepancies']) > 5 for match in best_matching_rate_card_rows)
+        if has_too_many_fields_to_update:
             comments_for_current_etofs_row.append("Please recheck the shipment details. Too many shipment details to update.")
+        
+        # If too many matches (>4 lanes), use pattern analysis to find dominant issue
+        if too_many_matches:
+            # Collect ALL discrepancies from all matches for pattern analysis
+            all_discrepancies = []
+            for match_info in best_matching_rate_card_rows:
+                all_discrepancies.extend(match_info['discrepancies'])
+            
+            # Analyze patterns in discrepancies
+            has_common_pattern, pattern_comment = analyze_discrepancy_patterns(all_discrepancies)
+            comments_for_current_etofs_row.append(pattern_comment)
+            
+            # If there's a common pattern, also show the count of affected lanes
+            if has_common_pattern:
+                comments_for_current_etofs_row.append(f"({len(best_matching_rate_card_rows)} possible rate lanes can be applied with this change)")
         
         # Check if "please recheck the shipment details" is already in comments
         # If so, don't add discrepancy details - this will be the full comment
         has_recheck_comment = "Please recheck the shipment details" in '\n'.join(comments_for_current_etofs_row)
         
-        # Add discrepancy details to comments only if "please recheck" is not present
-        if not has_recheck_comment:
+        # Add discrepancy details to comments only if "please recheck" is not present and not too many matches
+        if not has_recheck_comment and not too_many_matches:
             for match_idx, best_match_info in enumerate(best_matching_rate_card_rows):
                 discrepancies = best_match_info['discrepancies']
                 if discrepancies:
@@ -686,7 +789,7 @@ def run_matching(rate_card_file_path=None):
     # If rate_card_file_path not provided, try to find it
     if rate_card_file_path is None:
         input_folder = "input"
-        possible_names = ["rate_card.xlsx", "rate_card.xls"]
+        possible_names = ["rate_coty.xlsx", "rate_card.xls"]
         for name in possible_names:
             full_path = os.path.join(input_folder, name)
             if os.path.exists(full_path):
@@ -1090,3 +1193,5 @@ def run_matching(rate_card_file_path=None):
     return output_file
 
 
+if __name__ == "__main__":
+    run_matching()
