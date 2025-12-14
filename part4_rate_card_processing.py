@@ -145,20 +145,197 @@ def process_rate_card(file_path):
     return df_filtered_rate_card, column_names, conditions
 
 
-# Example usage
-"""if __name__ == "__main__":
+def clean_condition_text(condition_text):
+    """
+    Clean up condition text for better readability.
+    
+    Transforms:
+        "Conditional rules:
+        1. 33321-6422: TOPOSTALCODE starts with 33321-6422,333216422"
+    To:
+        "1. 33321-6422: starts with 33321-6422,333216422"
+    """
+    import re
+    
+    if not condition_text:
+        return condition_text
+    
+    # Remove "Conditional rules:" header (case insensitive)
+    cleaned = re.sub(r'(?i)^conditional\s*rules\s*:\s*\n?', '', condition_text.strip())
+    
+    # Remove column name references like "TOPOSTALCODE ", "FROMPOSTALCODE ", etc.
+    # Pattern: After the colon and value identifier, remove uppercase column names followed by space
+    # Example: "33321-6422: TOPOSTALCODE starts with" -> "33321-6422: starts with"
+    cleaned = re.sub(r':\s*[A-Z_]+\s+(starts with|contains|equals|is empty|does not contain|does not equal)', r': \1', cleaned)
+    
+    # Also handle cases without numbered format
+    cleaned = re.sub(r'^[A-Z_]+\s+(starts with|contains|equals|is empty|does not contain|does not equal)', r'\1', cleaned, flags=re.MULTILINE)
+    
+    # Clean up extra whitespace and newlines
+    lines = [line.strip() for line in cleaned.split('\n') if line.strip()]
+    cleaned = '\n'.join(lines)
+    
+    return cleaned
+
+
+def save_rate_card_output(file_path, output_path=None):
+    """
+    Process rate card and save output to Excel file with data and conditions.
+    
+    Args:
+        file_path (str): Path to the rate card file relative to "input/" folder
+        output_path (str): Optional output path. If None, saves to "Filtered_Rate_Card_with_Conditions.xlsx"
+    
+    Returns:
+        str: Path to the saved Excel file
+    """
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    
+    # Process the rate card
+    rate_card_dataframe, rate_card_column_names, rate_card_conditions = process_rate_card(file_path)
+    
+    # Set output path - save to partly_df folder (relative to script location)
+    if output_path is None:
+        # Get the directory where this script is located
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        # Ensure partly_df folder exists in the script's directory
+        partly_df_folder = os.path.join(script_dir, "partly_df")
+        if not os.path.exists(partly_df_folder):
+            os.makedirs(partly_df_folder)
+        output_path = os.path.join(partly_df_folder, "Filtered_Rate_Card_with_Conditions.xlsx")
+    
+    # Create conditions DataFrame with cleaned condition text
+    conditions_data = []
+    for col_name in rate_card_column_names:
+        raw_condition = rate_card_conditions.get(col_name, "")
+        cleaned_condition = clean_condition_text(raw_condition) if raw_condition else ""
+        conditions_data.append({
+            'Column': col_name,
+            'Has Condition': 'Yes' if col_name in rate_card_conditions else 'No',
+            'Condition Rule': cleaned_condition
+        })
+    
+    df_conditions = pd.DataFrame(conditions_data)
+    
+    # Save to Excel with formatting
+    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+        # Sheet 1: Rate Card Data
+        rate_card_dataframe.to_excel(writer, sheet_name='Rate Card Data', index=False)
+        
+        # Sheet 2: Conditions
+        df_conditions.to_excel(writer, sheet_name='Conditions', index=False)
+        
+        # Sheet 3: Summary
+        summary_data = {
+            'Metric': [
+                'Total Rows',
+                'Total Columns',
+                'Columns with Conditions',
+                'Columns without Conditions',
+                'Source File'
+            ],
+            'Value': [
+                len(rate_card_dataframe),
+                len(rate_card_column_names),
+                len(rate_card_conditions),
+                len(rate_card_column_names) - len(rate_card_conditions),
+                file_path
+            ]
+        }
+        df_summary = pd.DataFrame(summary_data)
+        df_summary.to_excel(writer, sheet_name='Summary', index=False)
+        
+        # Apply formatting
+        workbook = writer.book
+        
+        # Style definitions
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        condition_yes_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")  # Light green
+        condition_no_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")  # Light red
+        thin_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        
+        # Format Rate Card Data sheet
+        ws_data = workbook['Rate Card Data']
+        for cell in ws_data[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        
+        # Auto-adjust column widths
+        for column in ws_data.columns:
+            max_length = 0
+            column_letter = get_column_letter(column[0].column)
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            ws_data.column_dimensions[column_letter].width = min(max_length + 2, 40)
+        
+        ws_data.freeze_panes = 'A2'
+        
+        # Format Conditions sheet
+        ws_conditions = workbook['Conditions']
+        for cell in ws_conditions[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        
+        # Color "Has Condition" column based on Yes/No
+        for row in ws_conditions.iter_rows(min_row=2, max_row=ws_conditions.max_row):
+            has_condition_cell = row[1]  # Column B (Has Condition)
+            if has_condition_cell.value == 'Yes':
+                has_condition_cell.fill = condition_yes_fill
+            elif has_condition_cell.value == 'No':
+                has_condition_cell.fill = condition_no_fill
+            
+            # Wrap text in Condition Rule column
+            if len(row) > 2:
+                row[2].alignment = Alignment(wrap_text=True, vertical="top")
+        
+        # Set column widths for Conditions sheet
+        ws_conditions.column_dimensions['A'].width = 30  # Column
+        ws_conditions.column_dimensions['B'].width = 15  # Has Condition
+        ws_conditions.column_dimensions['C'].width = 80  # Condition Rule
+        
+        ws_conditions.freeze_panes = 'A2'
+        
+        # Format Summary sheet
+        ws_summary = workbook['Summary']
+        for cell in ws_summary[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        
+        ws_summary.column_dimensions['A'].width = 30
+        ws_summary.column_dimensions['B'].width = 50
+    
+    print(f"\n✅ Rate Card output saved to: {output_path}")
+    print(f"   - Sheet 'Rate Card Data': {len(rate_card_dataframe)} rows x {len(rate_card_column_names)} columns")
+    print(f"   - Sheet 'Conditions': {len(rate_card_conditions)} columns with conditions")
+    print(f"   - Sheet 'Summary': Overview statistics")
+    
+    return output_path
+
+
+if __name__ == "__main__":
+    # Process and save to Excel
+    output_file = save_rate_card_output("rate_card.xlsx")
+    
+    # Also print to console
     rate_card_dataframe, rate_card_column_names, rate_card_conditions = process_rate_card("rate_card.xlsx")
-    print("DataFrame:")
-    print(rate_card_dataframe)
+    print("\nDataFrame shape:", rate_card_dataframe.shape)
     print("\nColumn names:")
     print(rate_card_column_names)
-    print("\nConditions:")
-    print(rate_card_conditions)"""
-
-#rate_card_dataframe, rate_card_column_names, rate_card_conditions = process_rate_card("rate_dairb.xlsx")
-#print("DataFrame:")
-#print(rate_card_dataframe)
-# print("\nColumn names:")
-#print(rate_card_column_names)
-#print("\nConditions:")
-#print(rate_card_conditions)
+    print("\nConditions (cleaned):")
+    for col, condition in rate_card_conditions.items():
+        cleaned = clean_condition_text(condition)
+        print(f"  {col}: {cleaned[:100]}..." if len(cleaned) > 100 else f"  {col}: {cleaned}")
