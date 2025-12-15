@@ -120,6 +120,24 @@ def map_etof_to_lc(etof_dataframe, lc_dataframe_updated):
     has_shipment_id_lc = 'SHIPMENT_ID' in lc_dataframe_final.columns
     use_shipment_id = has_shipment_id_etof and has_shipment_id_lc
     
+    # Check if DELIVERY_NUMBER is present in both dataframes (fallback option)
+    # Find DELIVERY_NUMBER column in LC (handle variations)
+    delivery_col_lc = None
+    for col in ['DELIVERY_NUMBER', 'Delivery Number', 'delivery_number', 'DeliveryNumber', 'DELIVERY NUMBER']:
+        if col in lc_dataframe_final.columns:
+            delivery_col_lc = col
+            break
+    
+    # Find DELIVERY NUMBER(s) column in ETOF (handle variations)
+    delivery_col_etof = None
+    for col in ['DELIVERY NUMBER(s)', 'DELIVERY_NUMBER(s)', 'Delivery Number(s)', 'DELIVERY NUMBER', 
+                'DELIVERY_NUMBER', 'Delivery Number', 'delivery_number']:
+        if col in etof_dataframe.columns:
+            delivery_col_etof = col
+            break
+    
+    use_delivery_number = delivery_col_lc is not None and delivery_col_etof is not None
+    
     if use_shipment_id:
         # Use SHIPMENT_ID for mapping
         # Create mapping dictionaries: SHIPMENT_ID (from ETOF) -> ETOF # and LC # (from ETOF)
@@ -163,13 +181,100 @@ def map_etof_to_lc(etof_dataframe, lc_dataframe_updated):
             lc_dataframe_final = lc_dataframe_final.rename(columns={'Order file #': 'LC #'})
         else:
             lc_dataframe_final['LC #'] = None
+    
+    elif use_delivery_number:
+        # Fallback: Use DELIVERY_NUMBER for mapping when SHIPMENT_ID is not available
+        print(f"   Using DELIVERY_NUMBER mapping: LC column '{delivery_col_lc}' <-> ETOF column '{delivery_col_etof}'")
+        
+        # Create mapping dictionaries: DELIVERY_NUMBER (from ETOF) -> ETOF # and LC # (from ETOF)
+        # Two levels of mapping:
+        # 1. Exact match on the whole delivery number string (e.g., "2015141638  , 2015151082  , ...")
+        # 2. Individual number match (e.g., "2015141638")
+        
+        # Exact (full string) mappings
+        delivery_exact_to_etof = {}
+        delivery_exact_to_lc = {}
+        
+        # Individual number mappings
+        delivery_individual_to_etof = {}
+        delivery_individual_to_lc = {}
+        
+        for _, row in etof_dataframe.iterrows():
+            delivery_value = str(row.get(delivery_col_etof, '')).strip()
+            etof_value = str(row.get('ETOF #', '')).strip()
+            lc_value = str(row.get('LC #', '')).strip() if 'LC #' in etof_dataframe.columns else None
+            
+            if pd.notna(row.get(delivery_col_etof)) and delivery_value and delivery_value.lower() != 'nan':
+                # First: Store exact (full string) mapping
+                if pd.notna(row.get('ETOF #')) and etof_value and etof_value.lower() != 'nan':
+                    delivery_exact_to_etof[delivery_value] = etof_value
+                
+                if lc_value and pd.notna(row.get('LC #')) and lc_value.lower() != 'nan':
+                    delivery_exact_to_lc[delivery_value] = lc_value
+                
+                # Second: Store individual number mappings
+                # Handle multiple delivery numbers (comma or semicolon separated, with possible spaces)
+                # Example: "2015141638  , 2015151082  , 2015151083  , 2015155815"
+                delivery_numbers = [d.strip() for d in delivery_value.replace(';', ',').split(',') if d.strip()]
+                
+                for delivery_num in delivery_numbers:
+                    if delivery_num and delivery_num.lower() != 'nan':
+                        if pd.notna(row.get('ETOF #')) and etof_value and etof_value.lower() != 'nan':
+                            delivery_individual_to_etof[delivery_num] = etof_value
+                        
+                        if lc_value and pd.notna(row.get('LC #')) and lc_value.lower() != 'nan':
+                            delivery_individual_to_lc[delivery_num] = lc_value
+        
+        print(f"   Built exact mapping with {len(delivery_exact_to_etof)} full strings -> ETOF #")
+        print(f"   Built individual mapping with {len(delivery_individual_to_etof)} delivery numbers -> ETOF #")
+        
+        # Map ETOF # values by matching DELIVERY_NUMBER
+        # Priority: 1. Exact match on full string, 2. Individual number match
+        def find_etof_number_by_delivery(row):
+            delivery_num = str(row.get(delivery_col_lc, '')).strip()
+            if pd.isna(row.get(delivery_col_lc)) or delivery_num == '' or delivery_num.lower() == 'nan':
+                return None
+            
+            # First try exact match on the whole string
+            if delivery_num in delivery_exact_to_etof:
+                return delivery_exact_to_etof[delivery_num]
+            
+            # Then try individual number match
+            return delivery_individual_to_etof.get(delivery_num)
+        
+        # Map LC # values by matching DELIVERY_NUMBER
+        def find_lc_number_by_delivery(row):
+            delivery_num = str(row.get(delivery_col_lc, '')).strip()
+            if pd.isna(row.get(delivery_col_lc)) or delivery_num == '' or delivery_num.lower() == 'nan':
+                return None
+            
+            # First try exact match on the whole string
+            if delivery_num in delivery_exact_to_lc:
+                return delivery_exact_to_lc[delivery_num]
+            
+            # Then try individual number match
+            return delivery_individual_to_lc.get(delivery_num)
+        
+        # Apply mappings
+        lc_dataframe_final['ETOF #'] = lc_dataframe_final.apply(find_etof_number_by_delivery, axis=1)
+        matched_count = lc_dataframe_final['ETOF #'].notna().sum()
+        print(f"   Mapped {matched_count} rows using DELIVERY_NUMBER")
+        
+        # Map LC # from ETOF if available, otherwise use existing or create empty
+        if delivery_exact_to_lc or delivery_individual_to_lc:
+            lc_dataframe_final['LC #'] = lc_dataframe_final.apply(find_lc_number_by_delivery, axis=1)
+        elif 'Order file #' in lc_dataframe_final.columns:
+            lc_dataframe_final = lc_dataframe_final.rename(columns={'Order file #': 'LC #'})
+        elif 'LC #' not in lc_dataframe_final.columns:
+            lc_dataframe_final['LC #'] = None
+    
     else:
         # Fall back to LC # matching (original method) - requires Order file #
         if 'Order file #' not in lc_dataframe_final.columns:
-            raise ValueError("lc_dataframe_updated must have 'Order file #' column when SHIPMENT_ID is not available")
+            raise ValueError("lc_dataframe_updated must have 'Order file #' column when SHIPMENT_ID and DELIVERY_NUMBER are not available")
         
         if 'LC #' not in etof_dataframe.columns:
-            raise ValueError("etof_dataframe must have 'LC #' column when SHIPMENT_ID is not available")
+            raise ValueError("etof_dataframe must have 'LC #' column when SHIPMENT_ID and DELIVERY_NUMBER are not available")
         
         # Create mapping dictionary: LC # (from ETOF) -> ETOF # (from ETOF)
         lc_to_etof = {}
@@ -269,10 +374,6 @@ def process_order_lc_etof_mapping(lc_input_path, etof_path, order_files_path=Non
     
     # Step 4: Map ETOF # to LC dataframe
     lc_dataframe_final, lc_column_names = map_etof_to_lc(etof_dataframe, lc_dataframe)
-
-    #if 'DELIVERY_NUMBER'in lc_dataframe_final.columns:
-        #lc_dataframe_final = lc_dataframe_final.rename(columns={'DELIVERY_NUMBER': 'Delivery Number'})
-        #lc_column_names = lc_dataframe_final.columns.tolist()
     
     save_dataframe_to_excel(lc_dataframe_final, output_filename)
     
@@ -280,22 +381,16 @@ def process_order_lc_etof_mapping(lc_input_path, etof_path, order_files_path=Non
 
 
 #if __name__ == "__main__":
-#    lc_input_path = "20251007"
-#    etof_path = "resmed_etofs.xlsx"
+    #lc_input_path = "lc_dairb.xml"
+    #etof_path = "etofs_dairb.xlsx"
     
     # If order_files_path is provided, it will use order file mapping logic
     # If not provided (None), it will use SHIPMENT_ID mapping
 #    order_files_path = "Order_files_export.xls.xlsx"  # Set to None or omit to use SHIPMENT_ID mapping
     
-#    df_lc_updated, lc_column_names = process_order_lc_etof_mapping(
-#        lc_input_path, 
-#        etof_path, 
-#        order_files_path=order_files_path
+    #df_lc_updated, lc_column_names = process_order_lc_etof_mapping(
+       # lc_input_path, 
+      #  etof_path, 
+        #order_files_path=order_files_path
 #    )
-
-
-
-
-
-
 
