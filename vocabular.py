@@ -64,6 +64,10 @@ def normalize_for_semantics(text):
     text = text.replace('destination postal code', 'cust_post')
     text = text.replace('destination postal', 'cust_post')
     text = text.replace('postal code', 'post')
+    # Flow Type / Category mappings
+    text = text.replace('flow type', 'category')
+    text = text.replace('flowtype', 'category')
+    text = text.replace('flow_type', 'category')
     return text
 
 
@@ -85,6 +89,13 @@ def find_semantic_match_llm(target_col, candidate_cols, threshold=0.3):
         'cust_post': 'cust_post'
     }
     
+    # Direct Flow Type / Category mappings
+    flow_type_mappings = {
+        'flow type': 'category',
+        'flowtype': 'category',
+        'flow_type': 'category'
+    }
+    
     # Check direct postal code mappings first
     target_for_postal = target_lower.replace(' ', '')
     for postal_key, postal_value in postal_mappings.items():
@@ -92,6 +103,15 @@ def find_semantic_match_llm(target_col, candidate_cols, threshold=0.3):
             for cand in candidate_cols:
                 cand_lower = cand.lower().strip()
                 if postal_value in cand_lower or cand_lower in postal_value:
+                    return cand, 0.95
+    
+    # Check direct Flow Type / Category mappings
+    target_for_flow = target_lower.replace(' ', '').replace('_', '')
+    for flow_key, flow_value in flow_type_mappings.items():
+        if flow_key in target_lower or flow_key.replace(' ', '').replace('_', '') in target_for_flow:
+            for cand in candidate_cols:
+                cand_lower = cand.lower().strip()
+                if flow_value in cand_lower or cand_lower == flow_value:
                     return cand, 0.95
     
     # First try exact or very close matches
@@ -119,6 +139,8 @@ def find_semantic_match_llm(target_col, candidate_cols, threshold=0.3):
             enhanced_target = enhanced_target.replace('Origin postal code', 'SHIP_POST').replace('origin postal code', 'ship_post')
             enhanced_target = enhanced_target.replace('Destination postal code', 'CUST_POST').replace('destination postal code', 'cust_post')
             enhanced_target = enhanced_target.replace('SHIP_POST', 'ship_post').replace('CUST_POST', 'cust_post')
+            # Flow Type / Category mapping
+            enhanced_target = enhanced_target.replace('Flow Type', 'category').replace('flow type', 'category').replace('flow_type', 'category')
             
             enhanced_candidates = [c.replace('SHIP', 'origin').replace('CUST', 'destination').replace('ship', 'origin').replace('cust', 'destination')
                                  for c in candidate_cols]
@@ -129,6 +151,9 @@ def find_semantic_match_llm(target_col, candidate_cols, threshold=0.3):
             enhanced_candidates = [c.replace('Destination postal code', 'CUST_POST').replace('destination postal code', 'cust_post')
                                  for c in enhanced_candidates]
             enhanced_candidates = [c.replace('SHIP_POST', 'ship_post').replace('CUST_POST', 'cust_post')
+                                 for c in enhanced_candidates]
+            # Flow Type / Category mapping for candidates
+            enhanced_candidates = [c.replace('CATEGORY', 'category').replace('Category', 'category')
                                  for c in enhanced_candidates]
             
             target_embedding = model.encode([enhanced_target])
@@ -307,8 +332,6 @@ def is_excluded_column(column_name):
             if excluded_lower == 'carrier' and col_lower == 'carrier':
                 return True
             if 'delivery' in excluded_lower and 'delivery' in col_lower and 'number' in col_lower:
-                return True
-            if 'shipment' in excluded_lower and 'shipment' in col_lower and 'id' in col_lower:
                 return True
     
     return False
@@ -622,7 +645,39 @@ def map_and_rename_columns(
     """
     # Step 1: Get rate card columns
     try:
+        print(f"\nStep 1: Processing rate card file: {rate_card_file_path}")
+        
+        # Check if file exists in input folder (process_rate_card expects files in "input" folder)
+        import os
+        input_folder = "input"
+        expected_path = os.path.join(input_folder, rate_card_file_path)
+        
+        # Check if input folder exists
+        if not os.path.exists(input_folder):
+            print(f"   WARNING: '{input_folder}' folder does not exist. Creating it...")
+            os.makedirs(input_folder, exist_ok=True)
+        
+        # Check if file exists in input folder
+        if not os.path.exists(expected_path):
+            # Try with just the filename
+            filename = os.path.basename(rate_card_file_path)
+            alt_path = os.path.join(input_folder, filename)
+            if os.path.exists(alt_path):
+                rate_card_file_path = filename
+                print(f"   Using file: {alt_path}")
+            else:
+                error_msg = f"Rate card file not found at: {expected_path}"
+                if os.path.exists(rate_card_file_path):
+                    error_msg += f"\n   Found file at current location: {rate_card_file_path}"
+                    error_msg += f"\n   Please move it to: {expected_path}"
+                else:
+                    error_msg += f"\n   Please ensure the file exists in the '{input_folder}' folder."
+                raise FileNotFoundError(error_msg)
+        else:
+            print(f"   Found rate card at: {expected_path}")
+        
         rate_card_df, rate_card_columns_all, rate_card_conditions = process_rate_card(rate_card_file_path)
+        print(f"   Successfully loaded rate card: {len(rate_card_columns_all)} columns")
         
         # Filter out ignored columns
         if ignore_rate_card_columns is None:
@@ -642,7 +697,11 @@ def map_and_rename_columns(
             if not is_excluded_column(col) and col not in RATE_CARD_EXCLUDED_COLUMNS
         ]
         rate_card_columns = rate_card_columns_to_map
-    except Exception:
+        print(f"   Rate card columns to map: {len(rate_card_columns)}")
+    except Exception as e:
+        print(f"   ERROR processing rate card: {e}")
+        import traceback
+        traceback.print_exc()
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     
     # Step 2: Get ETOF, LC, and Origin dataframes
@@ -652,9 +711,14 @@ def map_and_rename_columns(
     
     if etof_file_path:
         try:
+            print(f"\nStep 2a: Processing ETOF file: {etof_file_path}")
             etof_df, etof_columns = process_etof_file(etof_file_path)
-        except Exception:
-            pass
+            print(f"   Successfully loaded ETOF: {len(etof_columns)} columns, {len(etof_df)} rows")
+        except Exception as e:
+            print(f"   ERROR processing ETOF: {e}")
+            import traceback
+            traceback.print_exc()
+            etof_df = None
     
     if origin_file_path:
         try:
@@ -676,15 +740,26 @@ def map_and_rename_columns(
     
     if lc_input_path and etof_file_path:
         try:
+            print(f"\nStep 2b: Processing LC file: {lc_input_path}")
             # process_order_lc_etof_mapping now accepts optional order_files_path
             # If order_files_path is provided, uses order file mapping
             # If not provided, uses SHIPMENT_ID mapping
             lc_df, lc_columns = process_order_lc_etof_mapping(lc_input_path, etof_file_path, order_files_path=order_files_path)
-        except Exception:
-            pass
+            print(f"   Successfully loaded LC: {len(lc_columns)} columns, {len(lc_df)} rows")
+        except Exception as e:
+            print(f"   ERROR processing LC: {e}")
+            import traceback
+            traceback.print_exc()
+            lc_df = None
     
     # Step 3: Find mappings for each rate card column
+    print(f"\nStep 3: Checking dataframes...")
+    print(f"   ETOF df: {'Exists' if etof_df is not None and not etof_df.empty else 'None/Empty'}")
+    print(f"   LC df: {'Exists' if lc_df is not None and not lc_df.empty else 'None/Empty'}")
+    print(f"   Origin df: {'Exists' if origin_df is not None and not origin_df.empty else 'None/Empty'}")
+    
     if etof_df is None and lc_df is None and origin_df is None:
+        print("   ERROR: All dataframes are None/Empty. Returning empty dataframes.")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     
     # Columns to always keep (even if not in rate card)
@@ -780,27 +855,24 @@ def map_and_rename_columns(
         """Helper function to create output dataframe with rate card columns and key columns only."""
         if source_df is None or source_df.empty:
             return None
-        
+
         output_df = source_df.copy()
-
-        #if 'DELIVERY_NUMBER'in output_df.columns:
-            #output_df = output_df.rename(columns={'DELIVERY_NUMBER': 'Delivery Number'})
-
-        #if 'DELIVERY NUMBER(s)'in output_df.columns:
-            #output_df = output_df.rename(columns={'DELIVERY NUMBER(s)': 'Delivery Number'})
-         #if 'SHIPMENT_ID'in output_df.columns:
-            #output_df = output_df.rename(columns={'SHIPMENT_ID': 'Shipment ID'})
-                                         
         rename_dict = {}
         columns_to_keep = []
         
         # Step 1: Add rate card mapped columns (will be renamed to "RateCardColumn (OriginalColumn)")
+        print(f"\n  [{source_name}] Step 1: Adding rate card mapped columns...")
         for rate_card_col, source_col in source_mappings.items():
             if source_col in output_df.columns:
                 rename_dict[source_col] = f"{rate_card_col} ({source_col})"
                 columns_to_keep.append(source_col)
+        print(f"    After Step 1: {len(output_df)} rows, {len(output_df.columns)} columns")
+        print(f"    Columns: {list(output_df.columns)}")
+        if not output_df.empty:
+            print(f"    First 3 rows:\n{output_df.head(3).to_string()}")
         
         # Step 2: Add columns to always keep (ETOF #, LC #, Carrier, Delivery Number)
+        print(f"\n  [{source_name}] Step 2: Adding columns to always keep...")
         for keep_col in keep_cols_list:
             # Try to find the column (case-insensitive and handle variations)
             found = False
@@ -816,8 +888,13 @@ def map_and_rename_columns(
                 # Also check if the column name itself matches (exact match)
                 if keep_col in output_df.columns and keep_col not in columns_to_keep:
                     columns_to_keep.append(keep_col)
+        print(f"    After Step 2: {len(output_df)} rows, {len(output_df.columns)} columns")
+        print(f"    Columns to keep so far: {columns_to_keep}")
+        if not output_df.empty:
+            print(f"    First 3 rows:\n{output_df.head(3).to_string()}")
         
         # Step 3: Add source-specific columns to keep (Loading date for ETOF, SHIP_DATE for LC)
+        print(f"\n  [{source_name}] Step 3: Adding source-specific columns to keep...")
         for keep_col in specific_keep_list:
             # Try to find the column (case-insensitive)
             for col in output_df.columns:
@@ -825,11 +902,21 @@ def map_and_rename_columns(
                     if col not in columns_to_keep:
                         columns_to_keep.append(col)
                     break
+        print(f"    After Step 3: {len(output_df)} rows, {len(output_df.columns)} columns")
+        print(f"    Columns to keep so far: {columns_to_keep}")
+        if not output_df.empty:
+            print(f"    First 3 rows:\n{output_df.head(3).to_string()}")
         
         # Step 4: Rename columns first (before filtering)
+        print(f"\n  [{source_name}] Step 4: Renaming columns...")
         output_df.rename(columns=rename_dict, inplace=True)
+        print(f"    After Step 4: {len(output_df)} rows, {len(output_df.columns)} columns")
+        print(f"    Columns: {list(output_df.columns)}")
+        if not output_df.empty:
+            print(f"    First 3 rows:\n{output_df.head(3).to_string()}")
         
         # Step 5: Now rename "RateCardColumn (OriginalColumn)" to just "RateCardColumn"
+        print(f"\n  [{source_name}] Step 5: Renaming to standard column names...")
         rename_to_standard = {}
         for col in output_df.columns:
             if ' (' in col and col.endswith(')'):
@@ -848,9 +935,14 @@ def map_and_rename_columns(
                 elif col in output_df.columns:
                     updated_columns_to_keep.append(col)
             columns_to_keep = updated_columns_to_keep
+        print(f"    After Step 5: {len(output_df)} rows, {len(output_df.columns)} columns")
+        print(f"    Columns: {list(output_df.columns)}")
+        if not output_df.empty:
+            print(f"    First 3 rows:\n{output_df.head(3).to_string()}")
         
         # Step 6: Add ALL rate card columns that are not yet in the dataframe (as empty columns)
         # Only add columns that don't have a mapping (were not mapped from this source)
+        print(f"\n  [{source_name}] Step 6: Adding missing rate card columns as empty...")
         for rate_card_col in all_rate_card_cols:
             # Skip if this column was excluded from mapping
             if is_excluded_column(rate_card_col) or rate_card_col in RATE_CARD_EXCLUDED_COLUMNS:
@@ -866,8 +958,13 @@ def map_and_rename_columns(
                     output_df[rate_card_col] = None
                     if rate_card_col not in columns_to_keep:
                         columns_to_keep.append(rate_card_col)
+        print(f"    After Step 6: {len(output_df)} rows, {len(output_df.columns)} columns")
+        print(f"    Columns: {list(output_df.columns)}")
+        if not output_df.empty:
+            print(f"    First 3 rows:\n{output_df.head(3).to_string()}")
         
         # Step 7: Build final column list - ONLY rate card columns + key columns (LC #, ETOF #, Carrier, Loading date/SHIP_DATE)
+        print(f"\n  [{source_name}] Step 7: Building final column list...")
         final_columns = []
         
         # Add all rate card columns first (mapped or unmapped)
@@ -882,15 +979,19 @@ def map_and_rename_columns(
         
         # Add key columns: LC #, ETOF #, Carrier, Delivery Number, Shipment ID
         key_columns_to_find = ['ETOF #','LC #', 'carrier', 'carrier_name', 'shipment_id',
-                              'delivery_number', 'deliverynumber(s)']
+                              'delivery_number', 'deliverynumber(s)',]
+                              #'SHIPMENT_ID', 'DELIVERY_NUMBER','DELIVERY NUMBER(s)', 'delivery_number', 'delivery number(s)', 'deliverynumber', 'deliverynumber(s)']
         for key_col in key_columns_to_find:
             # Find the column (case-insensitive, handle variations)
             for col in output_df.columns:
                 col_normalized = col.lower().replace(' ', '').replace('#', '#')
                 key_normalized = key_col.lower().replace(' ', '').replace('#', '#')
-                if col_normalized == key_normalized:
+                result = (col_normalized == key_normalized)
+                print(f"Comparing '{col}' to '{key_col}': {col_normalized} == {key_normalized} -> {result}")
+                if result:
                     if col not in final_columns:
                         final_columns.append(col)
+                        print(f"Added '{col}' to final_columns")
                     break
         
         # Add source-specific columns: Loading date (ETOF) or SHIP_DATE (LC)
@@ -901,13 +1002,20 @@ def map_and_rename_columns(
                     if col not in final_columns:
                         final_columns.append(col)
                     break
+        print(f"    After Step 7: Final columns list: {final_columns}")
         
         # Step 8: Filter to keep ONLY the final columns
+        print(f"\n  [{source_name}] Step 8: Filtering to final columns...")
         output_df = output_df[final_columns]
+        print(f"    After Step 8: {len(output_df)} rows, {len(output_df.columns)} columns")
+        print(f"    Columns: {list(output_df.columns)}")
+        if not output_df.empty:
+            print(f"    First 3 rows:\n{output_df.head(3).to_string()}")
         
         # Step 9: Ensure Carrier column exists (add if not present)
+        print(f"\n  [{source_name}] Step 9: Ensuring required columns exist (Carrier, Delivery Number, Shipment ID)...")
         carrier_col_found = False
-        carrier_variations = ['Carrier', 'carrier', 'CARRIER']
+        carrier_variations = ['Carrier', 'carrier_name', 'CARRIER']
         
         for col in output_df.columns:
             if str(col).strip() in carrier_variations:
@@ -935,7 +1043,7 @@ def map_and_rename_columns(
         
         if not delivery_col_found:
             output_df['Delivery Number'] = None
-            final_columns.append('Delivery Number 1')
+            final_columns.append('Delivery Number')
         
         shipment_id_col_found = False
         shipment_id_variations = ['Shipment ID', 'ShipmentID', 'shipment id', 'shipmentid', 
@@ -956,6 +1064,11 @@ def map_and_rename_columns(
             output_df['Shipment ID'] = None
             final_columns.append('Shipment ID')
         
+        print(f"    After Step 9: {len(output_df)} rows, {len(output_df.columns)} columns")
+        print(f"    Final columns: {list(output_df.columns)}")
+        if not output_df.empty:
+            print(f"    First 3 rows:\n{output_df.head(3).to_string()}")
+        
         return output_df
     
     # Process ETOF
@@ -964,6 +1077,13 @@ def map_and_rename_columns(
         etof_df_renamed = create_output_dataframe(
             etof_df, etof_mappings, 'ETOF', keep_columns, etof_specific_keep, all_rate_card_cols_for_output
         )
+        print(f"\nStep 4a: After creating ETOF output dataframe")
+        if etof_df_renamed is not None and not etof_df_renamed.empty:
+            print(f"   ETOF DataFrame: {len(etof_df_renamed)} rows, {len(etof_df_renamed.columns)} columns")
+            print(f"   Columns: {list(etof_df_renamed.columns)}")
+            print(f"   First few rows:\n{etof_df_renamed.head(3).to_string()}")
+        else:
+            print(f"   ETOF DataFrame: Empty or None")
     
     # Process LC
     if lc_df is not None:
@@ -971,12 +1091,13 @@ def map_and_rename_columns(
         lc_df_renamed = create_output_dataframe(
             lc_df, lc_mappings, 'LC', keep_columns, lc_specific_keep, all_rate_card_cols_for_output
         )
-        
-        # Print LC column list
+        print(f"\nStep 4b: After creating LC output dataframe")
         if lc_df_renamed is not None and not lc_df_renamed.empty:
-            print(f"\n   LC DataFrame Columns ({len(lc_df_renamed.columns)}):")
-            for i, col in enumerate(lc_df_renamed.columns, 1):
-                print(f"     {i}. {col}")
+            print(f"   LC DataFrame: {len(lc_df_renamed)} rows, {len(lc_df_renamed.columns)} columns")
+            print(f"   Columns: {list(lc_df_renamed.columns)}")
+            print(f"   First few rows:\n{lc_df_renamed.head(3).to_string()}")
+        else:
+            print(f"   LC DataFrame: Empty or None")
     
     # Process Origin
     if origin_df is not None:
@@ -984,6 +1105,13 @@ def map_and_rename_columns(
         origin_df_renamed = create_output_dataframe(
             origin_df, origin_mappings, 'Origin', keep_columns, origin_specific_keep, all_rate_card_cols_for_output
         )
+        print(f"\nStep 4c: After creating Origin output dataframe")
+        if origin_df_renamed is not None and not origin_df_renamed.empty:
+            print(f"   Origin DataFrame: {len(origin_df_renamed)} rows, {len(origin_df_renamed.columns)} columns")
+            print(f"   Columns: {list(origin_df_renamed.columns)}")
+            print(f"   First few rows:\n{origin_df_renamed.head(3).to_string()}")
+        else:
+            print(f"   Origin DataFrame: Empty or None")
     
     # Step 4.5: Fill LC Carrier column from ETOF Carrier ID
     if lc_df_renamed is not None and etof_df_renamed is not None:
@@ -1076,6 +1204,21 @@ def map_and_rename_columns(
                 missing_cols.append("ETOF Carrier ID")
             if not lc_carrier_col:
                 missing_cols.append("LC Carrier")
+        
+        # Print dataframe headers after Step 4.5
+        print(f"\nStep 4.5: After filling LC Carrier from ETOF")
+        if etof_df_renamed is not None and not etof_df_renamed.empty:
+            print(f"   ETOF DataFrame: {len(etof_df_renamed)} rows, {len(etof_df_renamed.columns)} columns")
+            print(f"   Columns: {list(etof_df_renamed.columns)}")
+            print(f"   First few rows:\n{etof_df_renamed.head(3).to_string()}")
+        if lc_df_renamed is not None and not lc_df_renamed.empty:
+            print(f"   LC DataFrame: {len(lc_df_renamed)} rows, {len(lc_df_renamed.columns)} columns")
+            print(f"   Columns: {list(lc_df_renamed.columns)}")
+            print(f"   First few rows:\n{lc_df_renamed.head(3).to_string()}")
+        if origin_df_renamed is not None and not origin_df_renamed.empty:
+            print(f"   Origin DataFrame: {len(origin_df_renamed)} rows, {len(origin_df_renamed.columns)} columns")
+            print(f"   Columns: {list(origin_df_renamed.columns)}")
+            print(f"   First few rows:\n{origin_df_renamed.head(3).to_string()}")
             
     
     # Step 6: Update ETOF dataframe with values from Origin dataframe
@@ -1172,6 +1315,21 @@ def map_and_rename_columns(
                                 updated_count += 1
         except Exception:
             pass
+        
+        # Print dataframe headers after Step 6
+        print(f"\nStep 6: After updating ETOF from Origin")
+        if etof_df_renamed is not None and not etof_df_renamed.empty:
+            print(f"   ETOF DataFrame: {len(etof_df_renamed)} rows, {len(etof_df_renamed.columns)} columns")
+            print(f"   Columns: {list(etof_df_renamed.columns)}")
+            print(f"   First few rows:\n{etof_df_renamed.head(3).to_string()}")
+        if lc_df_renamed is not None and not lc_df_renamed.empty:
+            print(f"   LC DataFrame: {len(lc_df_renamed)} rows, {len(lc_df_renamed.columns)} columns")
+            print(f"   Columns: {list(lc_df_renamed.columns)}")
+            print(f"   First few rows:\n{lc_df_renamed.head(3).to_string()}")
+        if origin_df_renamed is not None and not origin_df_renamed.empty:
+            print(f"   Origin DataFrame: {len(origin_df_renamed)} rows, {len(origin_df_renamed.columns)} columns")
+            print(f"   Columns: {list(origin_df_renamed.columns)}")
+            print(f"   First few rows:\n{origin_df_renamed.head(3).to_string()}")
     
     # Step 7: Save mapping to txt file
     from pathlib import Path
@@ -1197,9 +1355,31 @@ def map_and_rename_columns(
             f.write(f"  {rate_card_col} <- {lc_col}\n")
         f.write("\nOrigin Mappings:\n")
         for rate_card_col, origin_col in origin_mappings.items():
-            f.write(f"  {rate_card_col} <- {origin_col}\n")    
+            f.write(f"  {rate_card_col} <- {origin_col}\n")
     
-    # Step 8: Save dataframes to Excel file
+    # Print final dataframe headers before returning
+    print(f"\nStep 7: Final dataframes before return")
+    if etof_df_renamed is not None and not etof_df_renamed.empty:
+        print(f"   ETOF DataFrame: {len(etof_df_renamed)} rows, {len(etof_df_renamed.columns)} columns")
+        print(f"   Columns: {list(etof_df_renamed.columns)}")
+        print(f"   First few rows:\n{etof_df_renamed.head(3).to_string()}")
+    else:
+        print(f"   ETOF DataFrame: Empty or None")
+    if lc_df_renamed is not None and not lc_df_renamed.empty:
+        print(f"   LC DataFrame: {len(lc_df_renamed)} rows, {len(lc_df_renamed.columns)} columns")
+        print(f"   Columns: {list(lc_df_renamed.columns)}")
+        print(f"   First few rows:\n{lc_df_renamed.head(3).to_string()}")
+    else:
+        print(f"   LC DataFrame: Empty or None")
+    if origin_df_renamed is not None and not origin_df_renamed.empty:
+        print(f"   Origin DataFrame: {len(origin_df_renamed)} rows, {len(origin_df_renamed.columns)} columns")
+        print(f"   Columns: {list(origin_df_renamed.columns)}")
+        print(f"   First few rows:\n{origin_df_renamed.head(3).to_string()}")
+    else:
+        print(f"   Origin DataFrame: Empty or None")
+
+
+     # Step 8: Save dataframes to Excel file
     excel_output_path = output_folder / "vocabulary_mapping.xlsx"
     with pd.ExcelWriter(excel_output_path, engine='openpyxl') as writer:
         if etof_df_renamed is not None and not etof_df_renamed.empty:
@@ -1219,33 +1399,23 @@ def map_and_rename_columns(
 
 # Example usage
 #if __name__ == "__main__":
-#    try:
+ #   try:
         # Main function: Map and rename columns
-#        etof_renamed, lc_renamed, origin_renamed = map_and_rename_columns(
-#            rate_card_file_path="rate_dairb.xlsx",
- #           etof_file_path="etofs_dairb.xlsx",
+  #      etof_renamed, lc_renamed, origin_renamed = map_and_rename_columns(
+    #        rate_card_file_path="rate_coty.xlsx",
+    #        etof_file_path="etofs_coty.xlsx",
             #origin_file_path="file_dairb.xlsx",
             #origin_header_row=16,
             #origin_end_column=33,
             #order_files_path="Order_files_export.xls.xlsx",
-#            lc_input_path="LC_Bollore ES (EUR)_ADSESPR03Bollore_ADS_Airfreight_ES_202509_CDP_I250014731_.xml",
-#            output_txt_path="column_mapping_results.txt",
- #           ignore_rate_card_columns=["Business Unit Name", "Remark"],
- #           shipper_id="dairb"  # Custom logic: maps "SHAI Reference" to "SHIPMENT_ID" for dairb
-  #      )
-        
- #   except Exception:
-  #      pass
-#
+            #lc_input_path="lc_dairb.xml",
+            #ignore_rate_card_columns=["Business Unit Name", "Remark"],
+      #      shipper_id="coty"  # Custom logic: maps "SHAI Reference" to "SHIPMENT_ID" for dairb
+     #   )
+   # except Exception:
+   #     pass  
 
-
-
-
-
-
-
-
-
+ 
 
 
 
