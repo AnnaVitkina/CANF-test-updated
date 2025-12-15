@@ -137,10 +137,19 @@ def process_rate_card(file_path):
     column_names = df_filtered_rate_card.columns.tolist()
     
     # Create conditions dictionary (only for columns that exist in the filtered dataframe)
+    # Use cleaned conditions for better matching
     conditions = {}
     for col_name in column_names:
         if col_name in column_notes:
-            conditions[col_name] = column_notes[col_name]
+            # Clean the condition text for better parsing
+            raw_condition = column_notes[col_name]
+            cleaned_condition = clean_condition_text(raw_condition)
+            conditions[col_name] = cleaned_condition
+            
+            # Debug: Print raw vs cleaned conditions
+            print(f"   [DEBUG] Condition for '{col_name}':")
+            print(f"      Raw: {raw_condition[:80]}..." if len(raw_condition) > 80 else f"      Raw: {raw_condition}")
+            print(f"      Cleaned: {cleaned_condition[:80]}..." if len(cleaned_condition) > 80 else f"      Cleaned: {cleaned_condition}")
     
     return df_filtered_rate_card, column_names, conditions
 
@@ -328,10 +337,10 @@ def save_rate_card_output(file_path, output_path=None):
 
 if __name__ == "__main__":
     # Process and save to Excel
-    output_file = save_rate_card_output("rate_card.xlsx")
+    #output_file = save_rate_card_output("rate_coty.xlsx")
     
     # Also print to console
-    rate_card_dataframe, rate_card_column_names, rate_card_conditions = process_rate_card("rate_card.xlsx")
+    #rate_card_dataframe, rate_card_column_names, rate_card_conditions = process_rate_card("rate_coty.xlsx")
     print("\nDataFrame shape:", rate_card_dataframe.shape)
     print("\nColumn names:")
     print(rate_card_column_names)
