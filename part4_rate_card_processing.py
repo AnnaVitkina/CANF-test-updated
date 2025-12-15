@@ -335,16 +335,17 @@ def save_rate_card_output(file_path, output_path=None):
     return output_path
 
 
-if __name__ == "__main__":
+#if __name__ == "__main__":
     # Process and save to Excel
     #output_file = save_rate_card_output("rate_coty.xlsx")
     
     # Also print to console
     #rate_card_dataframe, rate_card_column_names, rate_card_conditions = process_rate_card("rate_coty.xlsx")
-    print("\nDataFrame shape:", rate_card_dataframe.shape)
-    print("\nColumn names:")
-    print(rate_card_column_names)
-    print("\nConditions (cleaned):")
-    for col, condition in rate_card_conditions.items():
-        cleaned = clean_condition_text(condition)
-        print(f"  {col}: {cleaned[:100]}..." if len(cleaned) > 100 else f"  {col}: {cleaned}")
+   #print("\nDataFrame shape:", rate_card_dataframe.shape)
+    #print("\nColumn names:")
+    #print(rate_card_column_names)
+    #print("\nConditions (cleaned):")
+    #for col, condition in rate_card_conditions.items():
+       # cleaned = clean_condition_text(condition)
+       # print(f"  {col}: {cleaned[:100]}..." if len(cleaned) > 100 else f"  {col}: {cleaned}")
+
