@@ -438,16 +438,51 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
     unique_rc_dest_countries_norm = set()
     unique_rc_orig_dest_combinations = set()  # Store (origin, dest) tuples
     
-    if 'Origin Country' in df_filtered_rate_card.columns:
-        unique_rc_orig_countries_norm = set(df_filtered_rate_card['Origin Country'].apply(normalize_value).dropna())
-    if 'Destination Country' in df_filtered_rate_card.columns:
-        unique_rc_dest_countries_norm = set(df_filtered_rate_card['Destination Country'].apply(normalize_value).dropna())
+    print("Rate Card columns:")
+    print(df_filtered_rate_card.columns)
+
+    # Find origin country column in rate card (handle variations)
+    rc_origin_col = None
+    rc_origin_variations = ['Origin Country', 'origin country', 'OriginCountry', 'origincountrycode', 
+                            'ORIGIN COUNTRY CODE', 'Origin Country Code', 'ORIGIN_COUNTRY', 'ORIGIN_COUNTRY_CODE']
+    for col in rc_origin_variations:
+        if col in df_filtered_rate_card.columns:
+            rc_origin_col = col
+            break
+    # Also check by normalized comparison if not found by exact match
+    if rc_origin_col is None:
+        for col in df_filtered_rate_card.columns:
+            if normalize_column_name(col) in ['origincountry', 'origincountrycode']:
+                rc_origin_col = col
+                break
+    
+    # Find destination country column in rate card (handle variations)
+    rc_dest_col = None
+    rc_dest_variations = ['Destination Country', 'destination country', 'DestinationCountry', 'destinationcountrycode',
+                          'DESTINATION COUNTRY CODE', 'Destination Country Code', 'DESTINATION_COUNTRY', 'DESTINATION_COUNTRY_CODE']
+    for col in rc_dest_variations:
+        if col in df_filtered_rate_card.columns:
+            rc_dest_col = col
+            break
+    # Also check by normalized comparison if not found by exact match
+    if rc_dest_col is None:
+        for col in df_filtered_rate_card.columns:
+            if normalize_column_name(col) in ['destinationcountry', 'destinationcountrycode']:
+                rc_dest_col = col
+                break
+    
+    if rc_origin_col:
+        print(f"   Found Rate Card Origin Country column: '{rc_origin_col}'")
+        unique_rc_orig_countries_norm = set(df_filtered_rate_card[rc_origin_col].apply(normalize_value).dropna())
+    if rc_dest_col:
+        print(f"   Found Rate Card Destination Country column: '{rc_dest_col}'")
+        unique_rc_dest_countries_norm = set(df_filtered_rate_card[rc_dest_col].apply(normalize_value).dropna())
     
     # Create set of (origin, destination) combinations from rate card
-    if 'Origin Country' in df_filtered_rate_card.columns and 'Destination Country' in df_filtered_rate_card.columns:
+    if rc_origin_col and rc_dest_col:
         for _, rc_row in df_filtered_rate_card.iterrows():
-            orig = normalize_value(rc_row.get('Origin Country'))
-            dest = normalize_value(rc_row.get('Destination Country'))
+            orig = normalize_value(rc_row.get(rc_origin_col))
+            dest = normalize_value(rc_row.get(rc_dest_col))
             if orig and dest:
                 unique_rc_orig_dest_combinations.add((orig, dest))
     
@@ -463,29 +498,29 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         shipment_orig_country_norm = None
         shipment_dest_country_norm = None
         
-        for col in ['Origin Country', 'origin country', 'OriginCountry', 'origin country code', 'ORIGIN COUNTRY CODE', 'origincountrycode']:
+        for col in ['Origin Country', 'origin country', 'OriginCountry', 'origincountrycode', 'ORIGIN COUNTRY CODE']:
             if col in row_etofs:
                 shipment_orig_country_norm = normalize_value(row_etofs[col])
                 break
         
-        for col in ['Destination Country', 'destination country', 'DestinationCountry', 'DESTINATION COUNTRY CODE', 'destination country code', 'destinationcountrycode']:
+        for col in ['Destination Country', 'destination country', 'DestinationCountry', 'destinationcountrycode', 'DESTINATION COUNTRY CODE']:
             if col in row_etofs:
                 shipment_dest_country_norm = normalize_value(row_etofs[col])
                 break
         
         # Check if origin country is missing
         if shipment_orig_country_norm is None:
-            comments_for_current_etofs_row.append("origin country is missing")
+            comments_for_current_etofs_row.append("Origin country is missing")
         # Check if destination country is missing
         elif shipment_dest_country_norm is None:
-            comments_for_current_etofs_row.append("destination country is missing")
+            comments_for_current_etofs_row.append("Destination country is missing")
         # If both present, check if they exist in rate card
         else:
             orig_missing = shipment_orig_country_norm not in unique_rc_orig_countries_norm
             dest_missing = shipment_dest_country_norm not in unique_rc_dest_countries_norm
             
             if orig_missing and dest_missing:
-                comments_for_current_etofs_row.append("origin-destination are missing")
+                comments_for_current_etofs_row.append("Origin-Destination are missing")
             elif orig_missing:
                 orig_val = row_etofs.get('Origin Country', row_etofs.get('origin country', 'N/A'))
                 comments_for_current_etofs_row.append(f"Origin country '{orig_val}' is missing")
@@ -611,34 +646,88 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                     date_col = col
                     break
         
+        # Debug: Print date column detection results
+        print(f"\n   [DEBUG Row {index_etofs}] Date validation setup:")
+        print(f"      - Date column found: '{date_col}' with value: '{date_value}' (type: {type(date_value).__name__})")
+        print(f"      - Valid from column: '{valid_from_col}'")
+        print(f"      - Valid to column: '{valid_to_col}'")
+        
         # Check date validity for all best matches first (before discrepancy checking)
         # If date is invalid for all matches, add comment and skip discrepancy checking
         if date_col and date_value and valid_from_col and valid_to_col:
             date_invalid_count = 0
-            for best_match_info in best_matching_rate_card_rows:
+            print(f"      - Checking {len(best_matching_rate_card_rows)} best matching rate card rows...")
+            for match_idx, best_match_info in enumerate(best_matching_rate_card_rows):
                 rate_card_row_dict = best_match_info['rate_card_row']
                 valid_from = rate_card_row_dict.get(valid_from_col)
                 valid_to = rate_card_row_dict.get(valid_to_col)
                 
+                print(f"      - Match {match_idx + 1}: Valid from='{valid_from}' (type: {type(valid_from).__name__}), Valid to='{valid_to}' (type: {type(valid_to).__name__})")
+                
                 if pd.notna(valid_from) and pd.notna(valid_to):
                     try:
-                        date_dt = pd.to_datetime(date_value, errors='coerce')
-                        valid_from_dt = pd.to_datetime(valid_from, errors='coerce')
-                        valid_to_dt = pd.to_datetime(valid_to, errors='coerce')
+                        # Try to parse date_value - handle YYYYMMDD format (e.g., 20250905)
+                        date_str = str(date_value).strip()
+                        if date_str.isdigit() and len(date_str) == 8:
+                            # YYYYMMDD format
+                            date_dt = pd.to_datetime(date_str, format='%Y%m%d', errors='coerce')
+                            print(f"        Detected YYYYMMDD format: '{date_str}' -> {date_dt}")
+                        else:
+                            date_dt = pd.to_datetime(date_value, errors='coerce')
+                        
+                        # Parse valid_from - handle DD.MM.YYYY format (e.g., 01.07.2025 = July 1, 2025)
+                        valid_from_str = str(valid_from).strip()
+                        if '.' in valid_from_str:
+                            # DD.MM.YYYY format (European date format)
+                            valid_from_dt = pd.to_datetime(valid_from_str, format='%d.%m.%Y', errors='coerce')
+                            print(f"        Detected DD.MM.YYYY format for valid_from: '{valid_from_str}' -> {valid_from_dt}")
+                        elif valid_from_str.isdigit() and len(valid_from_str) == 8:
+                            # DDMMYYYY format (no separators)
+                            valid_from_dt = pd.to_datetime(valid_from_str, format='%d%m%Y', errors='coerce')
+                            print(f"        Detected DDMMYYYY format for valid_from: '{valid_from_str}' -> {valid_from_dt}")
+                        else:
+                            valid_from_dt = pd.to_datetime(valid_from, dayfirst=True, errors='coerce')
+                        
+                        # Parse valid_to - handle DD.MM.YYYY format (e.g., 31.12.2025 = December 31, 2025)
+                        valid_to_str = str(valid_to).strip()
+                        if '.' in valid_to_str:
+                            # DD.MM.YYYY format (European date format)
+                            valid_to_dt = pd.to_datetime(valid_to_str, format='%d.%m.%Y', errors='coerce')
+                            print(f"        Detected DD.MM.YYYY format for valid_to: '{valid_to_str}' -> {valid_to_dt}")
+                        elif valid_to_str.isdigit() and len(valid_to_str) == 8:
+                            # DDMMYYYY format (no separators)
+                            valid_to_dt = pd.to_datetime(valid_to_str, format='%d%m%Y', errors='coerce')
+                            print(f"        Detected DDMMYYYY format for valid_to: '{valid_to_str}' -> {valid_to_dt}")
+                        else:
+                            valid_to_dt = pd.to_datetime(valid_to, dayfirst=True, errors='coerce')
+                        
+                        print(f"        Parsed: date_dt={date_dt}, valid_from_dt={valid_from_dt}, valid_to_dt={valid_to_dt}")
                         
                         if pd.notna(date_dt) and pd.notna(valid_from_dt) and pd.notna(valid_to_dt):
                             if date_dt < valid_from_dt or date_dt > valid_to_dt:
                                 date_invalid_count += 1
-                    except Exception:
-                        pass
+                                print(f"        Result: DATE INVALID (outside range)")
+                            else:
+                                print(f"        Result: Date is within valid range")
+                        else:
+                            print(f"        Result: Could not parse one or more dates (NaT detected)")
+                    except Exception as e:
+                        print(f"        Result: EXCEPTION during date parsing: {e}")
+                else:
+                    print(f"        Result: Skipped (valid_from or valid_to is NaN)")
             
             # If date is invalid for all matches, add comment and skip discrepancy checking
+            print(f"      - Date invalid count: {date_invalid_count} / {len(best_matching_rate_card_rows)}")
             if date_invalid_count == len(best_matching_rate_card_rows) and len(best_matching_rate_card_rows) > 0:
+                print(f"      - All matches have invalid dates, skipping discrepancy checking")
                 comments_for_current_etofs_row.append(f"Date '{date_value}' is outside valid date range for all matching rate card entries")
                 df_etofs.loc[index_etofs, 'comment'] = '\n'.join(comments_for_current_etofs_row)
                 continue
+        else:
+            print(f"      - Skipping date validation (missing: date_col={date_col is not None}, date_value={date_value is not None}, valid_from_col={valid_from_col is not None}, valid_to_col={valid_to_col is not None})")
         
         # ===== STEP 3: Identify discrepancies for best matching rows =====
+        print(f"\n   [DEBUG Row {index_etofs}] Identifying discrepancies for {len(best_matching_rate_card_rows)} best matching rows...")
         for match_idx, best_match_info in enumerate(best_matching_rate_card_rows):
             rate_card_row_dict = best_match_info['rate_card_row']
             discrepancies = []
@@ -648,17 +737,58 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                 valid_from = rate_card_row_dict.get(valid_from_col)
                 valid_to = rate_card_row_dict.get(valid_to_col)
                 
+                print(f"      [DEBUG Match {match_idx + 1}] Date discrepancy check:")
+                print(f"         - Ship date: '{date_value}' (type: {type(date_value).__name__})")
+                print(f"         - Valid from: '{valid_from}' (type: {type(valid_from).__name__})")
+                print(f"         - Valid to: '{valid_to}' (type: {type(valid_to).__name__})")
+                
                 if pd.notna(valid_from) and pd.notna(valid_to):
                     try:
                         # Convert dates to pandas datetime
-                        date_dt = pd.to_datetime(date_value, errors='coerce')
-                        valid_from_dt = pd.to_datetime(valid_from, errors='coerce')
-                        valid_to_dt = pd.to_datetime(valid_to, errors='coerce')
+                        # Handle YYYYMMDD format (e.g., 20250905)
+                        date_str = str(date_value).strip()
+                        if date_str.isdigit() and len(date_str) == 8:
+                            # YYYYMMDD format
+                            date_dt = pd.to_datetime(date_str, format='%Y%m%d', errors='coerce')
+                            print(f"         - Detected YYYYMMDD format: '{date_str}' -> {date_dt}")
+                        else:
+                            date_dt = pd.to_datetime(date_value, errors='coerce')
+                        
+                        # Parse valid_from - handle DD.MM.YYYY format (e.g., 01.07.2025 = July 1, 2025)
+                        valid_from_str = str(valid_from).strip()
+                        if '.' in valid_from_str:
+                            # DD.MM.YYYY format (European date format)
+                            valid_from_dt = pd.to_datetime(valid_from_str, format='%d.%m.%Y', errors='coerce')
+                            print(f"         - Detected DD.MM.YYYY format for valid_from: '{valid_from_str}' -> {valid_from_dt}")
+                        elif valid_from_str.isdigit() and len(valid_from_str) == 8:
+                            # DDMMYYYY format (no separators)
+                            valid_from_dt = pd.to_datetime(valid_from_str, format='%d%m%Y', errors='coerce')
+                            print(f"         - Detected DDMMYYYY format for valid_from: '{valid_from_str}' -> {valid_from_dt}")
+                        else:
+                            valid_from_dt = pd.to_datetime(valid_from, dayfirst=True, errors='coerce')
+                        
+                        # Parse valid_to - handle DD.MM.YYYY format (e.g., 31.12.2025 = December 31, 2025)
+                        valid_to_str = str(valid_to).strip()
+                        if '.' in valid_to_str:
+                            # DD.MM.YYYY format (European date format)
+                            valid_to_dt = pd.to_datetime(valid_to_str, format='%d.%m.%Y', errors='coerce')
+                            print(f"         - Detected DD.MM.YYYY format for valid_to: '{valid_to_str}' -> {valid_to_dt}")
+                        elif valid_to_str.isdigit() and len(valid_to_str) == 8:
+                            # DDMMYYYY format (no separators)
+                            valid_to_dt = pd.to_datetime(valid_to_str, format='%d%m%Y', errors='coerce')
+                            print(f"         - Detected DDMMYYYY format for valid_to: '{valid_to_str}' -> {valid_to_dt}")
+                        else:
+                            valid_to_dt = pd.to_datetime(valid_to, dayfirst=True, errors='coerce')
+                        
+                        print(f"         - Parsed date_dt: {date_dt} (NaT: {pd.isna(date_dt)})")
+                        print(f"         - Parsed valid_from_dt: {valid_from_dt} (NaT: {pd.isna(valid_from_dt)})")
+                        print(f"         - Parsed valid_to_dt: {valid_to_dt} (NaT: {pd.isna(valid_to_dt)})")
                         
                         # Check if all dates were successfully parsed
                         if pd.notna(date_dt) and pd.notna(valid_from_dt) and pd.notna(valid_to_dt):
                             # Check if date is within valid range
                             if date_dt < valid_from_dt or date_dt > valid_to_dt:
+                                print(f"         - Result: DATE DISCREPANCY - outside valid range")
                                 discrepancies.append({
                                     'column': date_col,
                                     'etofs_value': date_value,
@@ -666,9 +796,15 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                                     'condition': None,
                                     'type': 'date_range'
                                 })
+                            else:
+                                print(f"         - Result: Date is within valid range (no discrepancy)")
+                        else:
+                            print(f"         - Result: Could not parse dates (NaT detected), skipping validation")
                     except Exception as e:
                         # If date parsing fails, skip this validation
-                        pass
+                        print(f"         - Result: EXCEPTION during date parsing: {e}")
+                else:
+                    print(f"         - Result: Skipped (valid_from or valid_to is NaN)")
             
             for i, col_norm in enumerate(common_columns_normalized):
                 if i >= len(common_etofs_cols_original) or i >= len(common_rate_card_cols_original):
@@ -789,7 +925,7 @@ def run_matching(rate_card_file_path=None):
     # If rate_card_file_path not provided, try to find it
     if rate_card_file_path is None:
         input_folder = "input"
-        possible_names = ["rate_coty.xlsx", "rate_card.xls"]
+        possible_names = ["rate aptiv.xlsx", "rate_card.xls"]
         for name in possible_names:
             full_path = os.path.join(input_folder, name)
             if os.path.exists(full_path):
@@ -1195,4 +1331,3 @@ def run_matching(rate_card_file_path=None):
 
 if __name__ == "__main__":
     run_matching()
-
