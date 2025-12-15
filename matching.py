@@ -463,12 +463,12 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         shipment_orig_country_norm = None
         shipment_dest_country_norm = None
         
-        for col in ['Origin Country', 'origin country', 'OriginCountry']:
+        for col in ['Origin Country', 'origin country', 'OriginCountry', 'origin country code', 'ORIGIN COUNTRY CODE', 'origincountrycode']:
             if col in row_etofs:
                 shipment_orig_country_norm = normalize_value(row_etofs[col])
                 break
         
-        for col in ['Destination Country', 'destination country', 'DestinationCountry']:
+        for col in ['Destination Country', 'destination country', 'DestinationCountry', 'DESTINATION COUNTRY CODE', 'destination country code', 'destinationcountrycode']:
             if col in row_etofs:
                 shipment_dest_country_norm = normalize_value(row_etofs[col])
                 break
@@ -1195,3 +1195,4 @@ def run_matching(rate_card_file_path=None):
 
 if __name__ == "__main__":
     run_matching()
+
