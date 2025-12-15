@@ -114,13 +114,14 @@ def parse_condition(condition_text, rate_card_value):
     return None, condition_text
 
 
-def value_satisfies_condition(resmed_value, rate_card_value, condition_text):
+def value_satisfies_condition(resmed_value, rate_card_value, condition_text, debug=False):
     """Check if a ResMed value satisfies the condition for a given rate card value.
     
     Args:
         resmed_value: The value from ResMed dataframe
         rate_card_value: The value from Rate Card (e.g., 'NAC')
         condition_text: The condition rule text
+        debug: Whether to print debug information
     
     Returns:
         True if the value satisfies the condition, False otherwise
@@ -131,7 +132,15 @@ def value_satisfies_condition(resmed_value, rate_card_value, condition_text):
         resmed_value = nan (empty)
         Returns: True (because empty satisfies "is empty")
     """
+    if debug:
+        print(f"            [CONDITION EVAL] Evaluating condition...")
+        print(f"               - Condition text: {condition_text[:100] if condition_text else 'None'}...")
+        print(f"               - Rate Card value: '{rate_card_value}'")
+        print(f"               - Shipment value: '{resmed_value}'")
+    
     if not condition_text or pd.isna(condition_text):
+        if debug:
+            print(f"               - Result: FALSE (condition is empty/None)")
         return False
     
     condition_text = str(condition_text).strip()
@@ -147,8 +156,13 @@ def value_satisfies_condition(resmed_value, rate_card_value, condition_text):
         condition_value = condition_parts[0].strip()
         condition_logic = condition_parts[1].strip() if len(condition_parts) > 1 else ''
         
+        if debug:
+            print(f"               - Condition value: '{condition_value}', Logic: '{condition_logic[:50]}...'")
+        
         # Check if this condition applies to the rate card value
         if rate_card_val_str and condition_value.lower() != rate_card_val_str:
+            if debug:
+                print(f"               - Result: FALSE (condition value '{condition_value}' != rate card value '{rate_card_val_str}')")
             return False
         
         condition_text = condition_logic  # Use only the logic part
@@ -158,23 +172,40 @@ def value_satisfies_condition(resmed_value, rate_card_value, condition_text):
     is_empty = pd.isna(resmed_value) or str(resmed_value).strip() == '' or str(resmed_value).lower() in ['nan', 'none', 'null', '']
     resmed_val_str = str(resmed_value).lower() if pd.notna(resmed_value) else ''
     
+    if debug:
+        print(f"               - Shipment value is empty: {is_empty}")
+        print(f"               - Shipment value (normalized): '{resmed_val_str}'")
+    
     # Parse condition logic
     # Example: "RATE_TYPE is empty in any item and does not contain FAK in any item"
     
     # Check "is empty" condition
     if 'is empty' in condition_lower or 'is empty in any item' in condition_lower:
+        if debug:
+            print(f"               - Checking 'is empty' condition...")
         if is_empty:
             # Value is empty - check if there are additional conditions
             # If condition has "and does not contain", empty values satisfy this (empty doesn't contain anything)
             if 'does not contain' in condition_lower or 'and' in condition_lower:
                 # For "and" conditions, all must be satisfied
                 # Empty value satisfies "is empty" and "does not contain X" (empty doesn't contain anything)
+                if debug:
+                    print(f"               - Result: TRUE (value is empty AND 'does not contain' also satisfied)")
                 return True
+            if debug:
+                print(f"               - Result: TRUE (value is empty)")
             return True
+        else:
+            if debug:
+                print(f"               - 'is empty' check: FAILED (value is not empty)")
     
     # Check "does not contain" condition
     if 'does not contain' in condition_lower:
+        if debug:
+            print(f"               - Checking 'does not contain' condition...")
         if is_empty:
+            if debug:
+                print(f"               - Result: TRUE (empty values don't contain anything)")
             return True  # Empty values don't contain anything
         
         # Extract what it should not contain
@@ -183,15 +214,25 @@ def value_satisfies_condition(resmed_value, rate_card_value, condition_text):
             forbidden_part = parts[1].split('in any item')[0].strip()
             # Handle comma-separated values (e.g., "EY,ETIHAD,ETIHAD AIRWAYS")
             forbidden_values = [v.strip() for v in forbidden_part.split(',')]
+            if debug:
+                print(f"               - Forbidden values: {forbidden_values}")
             # Check if ResMed value contains any forbidden value
             for forbidden in forbidden_values:
                 if forbidden and forbidden in resmed_val_str:
+                    if debug:
+                        print(f"               - Result: FALSE (value contains forbidden '{forbidden}')")
                     return False  # Contains forbidden value - condition not satisfied
+            if debug:
+                print(f"               - Result: TRUE (value does not contain any forbidden values)")
             return True  # Doesn't contain any forbidden value
     
     # Check "does not equal" condition
     if 'does not equal' in condition_lower or 'does not equal to' in condition_lower:
+        if debug:
+            print(f"               - Checking 'does not equal' condition...")
         if is_empty:
+            if debug:
+                print(f"               - Result: TRUE (empty values don't equal anything)")
             return True  # Empty values don't equal anything
         
         parts = condition_lower.split('does not equal')
@@ -199,15 +240,25 @@ def value_satisfies_condition(resmed_value, rate_card_value, condition_text):
             forbidden_part = parts[1].split('in any item')[0].strip()
             # Handle comma-separated values
             forbidden_values = [v.strip() for v in forbidden_part.split(',')]
+            if debug:
+                print(f"               - Forbidden values: {forbidden_values}")
             # Check if ResMed value equals any forbidden value
             for forbidden in forbidden_values:
                 if forbidden and resmed_val_str == forbidden:
+                    if debug:
+                        print(f"               - Result: FALSE (value equals forbidden '{forbidden}')")
                     return False  # Equals forbidden value - condition not satisfied
+            if debug:
+                print(f"               - Result: TRUE (value does not equal any forbidden values)")
             return True  # Doesn't equal any forbidden value
     
     # Check "contains" condition (positive match)
     if 'contains' in condition_lower and 'does not contain' not in condition_lower:
+        if debug:
+            print(f"               - Checking 'contains' condition...")
         if is_empty:
+            if debug:
+                print(f"               - Result: FALSE (empty values don't contain anything)")
             return False  # Empty values don't contain anything
         
         parts = condition_lower.split('contains')
@@ -215,15 +266,25 @@ def value_satisfies_condition(resmed_value, rate_card_value, condition_text):
             required_part = parts[1].split('in any item')[0].strip()
             # Handle comma-separated values
             required_values = [v.strip() for v in required_part.split(',')]
+            if debug:
+                print(f"               - Required values: {required_values}")
             # Check if ResMed value contains any required value
             for required in required_values:
                 if required and required in resmed_val_str:
+                    if debug:
+                        print(f"               - Result: TRUE (value contains required '{required}')")
                     return True  # Contains required value
+            if debug:
+                print(f"               - Result: FALSE (value does not contain any required values)")
             return False  # Doesn't contain any required value
     
     # Check "equals" or "equal to" condition
     if 'equal to' in condition_lower or ('equals' in condition_lower and 'does not equal' not in condition_lower):
+        if debug:
+            print(f"               - Checking 'equals/equal to' condition...")
         if is_empty:
+            if debug:
+                print(f"               - Result: FALSE (empty values don't equal anything)")
             return False  # Empty values don't equal anything
         
         if 'equal to' in condition_lower:
@@ -234,16 +295,24 @@ def value_satisfies_condition(resmed_value, rate_card_value, condition_text):
             required_part = parts[1].split('in any item')[0].strip()
             # Handle comma-separated values
             required_values = [v.strip() for v in required_part.split(',')]
+            if debug:
+                print(f"               - Required values: {required_values}")
             # Check if ResMed value equals any required value
             for required in required_values:
                 if required and resmed_val_str == required:
+                    if debug:
+                        print(f"               - Result: TRUE (value equals required '{required}')")
                     return True  # Equals required value
+            if debug:
+                print(f"               - Result: FALSE (value does not equal any required values)")
             return False  # Doesn't equal any required value
     
+    if debug:
+        print(f"               - Result: FALSE (no matching condition type found)")
     return False
 
 
-def check_value_against_conditions(resmed_value, rate_card_value, column_name, conditions_dict):
+def check_value_against_conditions(resmed_value, rate_card_value, column_name, conditions_dict, debug=False):
     """Check if ResMed value satisfies any condition for the rate card value.
     
     Returns:
@@ -257,10 +326,18 @@ def check_value_against_conditions(resmed_value, rate_card_value, column_name, c
             break
     
     if column_key is None:
+        if debug:
+            print(f"      [CONDITION DEBUG] Column '{column_name}' not found in conditions_dict")
         return False, None
     
     conditions = conditions_dict[column_key]
     rate_card_val_str = str(rate_card_value).lower() if pd.notna(rate_card_value) else ''
+    
+    if debug:
+        print(f"      [CONDITION DEBUG] Checking conditions for column '{column_name}':")
+        print(f"         - Shipment value: '{resmed_value}'")
+        print(f"         - Rate Card value: '{rate_card_value}'")
+        print(f"         - Conditions found: {conditions}")
     
     # Handle both string and list formats for conditions
     # rate_card_processing.py returns conditions as a string (from cell comments)
@@ -272,6 +349,9 @@ def check_value_against_conditions(resmed_value, rate_card_value, column_name, c
     else:
         # If it's neither string nor list, try to convert
         conditions_list = [str(conditions)]
+    
+    if debug:
+        print(f"         - Parsed conditions list ({len(conditions_list)} items): {conditions_list[:3]}{'...' if len(conditions_list) > 3 else ''}")
     
     for condition_text in conditions_list:
         # Check if this condition applies to the rate card value
@@ -291,10 +371,16 @@ def check_value_against_conditions(resmed_value, rate_card_value, column_name, c
             pattern = rf'(?:\d+\.\s*)?{re.escape(rate_card_val_str)}:'
             if re.search(pattern, condition_lower):
                 # This condition applies to this rate card value
-                is_valid = value_satisfies_condition(resmed_value, rate_card_value, condition_text)
+                if debug:
+                    print(f"         - Condition matches rate card value '{rate_card_val_str}': {condition_text[:80]}...")
+                is_valid = value_satisfies_condition(resmed_value, rate_card_value, condition_text, debug=debug)
+                if debug:
+                    print(f"         - Condition satisfied: {is_valid}")
                 if is_valid:
                     return True, condition_text
     
+    if debug:
+        print(f"         - No matching condition found for rate card value '{rate_card_val_str}'")
     return False, None
 
 
@@ -394,7 +480,7 @@ def analyze_discrepancy_patterns(all_discrepancies):
     return False, "Please recheck the shipment details"
 
 
-def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_columns, conditions_dict=None):
+def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_columns, conditions_dict=None, debug_conditions=True):
     """Match ResMed shipments with Rate Card entries and identify discrepancies.
     
     Args:
@@ -402,9 +488,34 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         df_filtered_rate_card: Rate Card standardized dataframe from rate_card_processing.py
         common_columns: List of common column names
         conditions_dict: Dictionary of conditional rules from rate_card_processing.py
+        debug_conditions: Enable debug output for condition checking (default: True)
     """
+    print(f"\n[DEBUG] match_shipments_with_rate_card called with debug_conditions={debug_conditions}")
+    
     if conditions_dict is None:
         conditions_dict = {}
+    
+    print(f"[DEBUG] conditions_dict received: {len(conditions_dict)} columns")
+    
+    # Debug: Print loaded conditions
+    if debug_conditions:
+        print("\n" + "="*80)
+        print("[DEBUG] CONDITIONS LOADED FOR MATCHING")
+        print("="*80)
+        if conditions_dict:
+            for col_name, conditions in conditions_dict.items():
+                print(f"\n   Column: '{col_name}'")
+                if isinstance(conditions, str):
+                    cond_lines = [line.strip() for line in conditions.split('\n') if line.strip()]
+                    for i, line in enumerate(cond_lines[:5]):  # Show first 5 lines
+                        print(f"      {i+1}. {line[:100]}{'...' if len(line) > 100 else ''}")
+                    if len(cond_lines) > 5:
+                        print(f"      ... and {len(cond_lines) - 5} more conditions")
+                else:
+                    print(f"      {conditions}")
+        else:
+            print("   No conditions loaded.")
+        print("="*80 + "\n")
     
     # Create a copy to preserve all original columns
     df_etofs = df_etofs.copy()
@@ -478,6 +589,61 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         print(f"   Found Rate Card Destination Country column: '{rc_dest_col}'")
         unique_rc_dest_countries_norm = set(df_filtered_rate_card[rc_dest_col].apply(normalize_value).dropna())
     
+    # Build country code mappings from conditions (e.g., "Singapore: equals SG" -> {"sg": "singapore"})
+    # This allows matching shipment country codes (like "SG") to rate card countries (like "Singapore")
+    origin_code_to_country = {}  # Maps normalized code -> normalized country name
+    dest_code_to_country = {}
+    
+    if rc_origin_col and rc_origin_col in conditions_dict:
+        origin_conditions = conditions_dict[rc_origin_col]
+        print(f"   [DEBUG] Origin Country conditions found: {origin_conditions[:100]}...")
+        # Parse conditions like "Singapore: equals SG" or "1. Singapore: equals SG,SGP"
+        import re
+        for line in str(origin_conditions).split('\n'):
+            line = line.strip()
+            if ':' in line and ('equals' in line.lower() or 'equal to' in line.lower()):
+                # Extract country name and code(s)
+                # Pattern: "1. Singapore: equals SG,SGP" or "Singapore: equals SG"
+                match = re.match(r'(?:\d+\.\s*)?([^:]+):\s*(?:equals?|equal to)\s*(.+)', line, re.IGNORECASE)
+                if match:
+                    country_name = normalize_value(match.group(1).strip())
+                    codes = [normalize_value(c.strip()) for c in match.group(2).split(',')]
+                    for code in codes:
+                        if code:
+                            origin_code_to_country[code] = country_name
+                            print(f"      Origin code mapping: '{code}' -> '{country_name}'")
+    
+    if rc_dest_col and rc_dest_col in conditions_dict:
+        dest_conditions = conditions_dict[rc_dest_col]
+        print(f"   [DEBUG] Destination Country conditions found: {dest_conditions[:100]}...")
+        import re
+        for line in str(dest_conditions).split('\n'):
+            line = line.strip()
+            if ':' in line and ('equals' in line.lower() or 'equal to' in line.lower()):
+                match = re.match(r'(?:\d+\.\s*)?([^:]+):\s*(?:equals?|equal to)\s*(.+)', line, re.IGNORECASE)
+                if match:
+                    country_name = normalize_value(match.group(1).strip())
+                    codes = [normalize_value(c.strip()) for c in match.group(2).split(',')]
+                    for code in codes:
+                        if code:
+                            dest_code_to_country[code] = country_name
+                            print(f"      Destination code mapping: '{code}' -> '{country_name}'")
+    
+    # Helper function to check if a shipment country value matches rate card countries
+    def country_matches_rate_card(shipment_country_norm, rc_countries_set, code_to_country_map):
+        """Check if shipment country matches any rate card country (directly or via conditions)."""
+        if not shipment_country_norm:
+            return False
+        # Direct match
+        if shipment_country_norm in rc_countries_set:
+            return True
+        # Match via condition code mapping (e.g., "sg" -> "singapore")
+        if shipment_country_norm in code_to_country_map:
+            mapped_country = code_to_country_map[shipment_country_norm]
+            if mapped_country in rc_countries_set:
+                return True
+        return False
+    
     # Create set of (origin, destination) combinations from rate card
     if rc_origin_col and rc_dest_col:
         for _, rc_row in df_filtered_rate_card.iterrows():
@@ -514,22 +680,40 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         # Check if destination country is missing
         elif shipment_dest_country_norm is None:
             comments_for_current_etofs_row.append("Destination country is missing")
-        # If both present, check if they exist in rate card
+        # If both present, check if they exist in rate card (using conditions for code matching)
         else:
-            orig_missing = shipment_orig_country_norm not in unique_rc_orig_countries_norm
-            dest_missing = shipment_dest_country_norm not in unique_rc_dest_countries_norm
+            # Check if origin matches (directly or via condition code mapping)
+            orig_matches = country_matches_rate_card(shipment_orig_country_norm, unique_rc_orig_countries_norm, origin_code_to_country)
+            dest_matches = country_matches_rate_card(shipment_dest_country_norm, unique_rc_dest_countries_norm, dest_code_to_country)
             
-            if orig_missing and dest_missing:
+            if debug_conditions:
+                print(f"   [DEBUG] Country matching for row {index_etofs}:")
+                print(f"      Shipment Origin: '{shipment_orig_country_norm}' -> matches: {orig_matches}")
+                print(f"      Shipment Dest: '{shipment_dest_country_norm}' -> matches: {dest_matches}")
+                if shipment_orig_country_norm in origin_code_to_country:
+                    print(f"      Origin code '{shipment_orig_country_norm}' maps to '{origin_code_to_country[shipment_orig_country_norm]}'")
+                if shipment_dest_country_norm in dest_code_to_country:
+                    print(f"      Dest code '{shipment_dest_country_norm}' maps to '{dest_code_to_country[shipment_dest_country_norm]}'")
+            
+            if not orig_matches and not dest_matches:
                 comments_for_current_etofs_row.append("Origin-Destination are missing")
-            elif orig_missing:
+            elif not orig_matches:
                 orig_val = row_etofs.get('Origin Country', row_etofs.get('origin country', 'N/A'))
                 comments_for_current_etofs_row.append(f"Origin country '{orig_val}' is missing")
-            elif dest_missing:
+            elif not dest_matches:
                 dest_val = row_etofs.get('Destination Country', row_etofs.get('destination country', 'N/A'))
                 comments_for_current_etofs_row.append(f"Destination country '{dest_val}' is missing")
             else:
-                # Both countries exist individually, check combination
-                combination = (shipment_orig_country_norm, shipment_dest_country_norm)
+                # Both countries exist individually (via direct match or condition), check combination
+                # Map shipment codes to rate card country names for combination check
+                orig_for_combo = origin_code_to_country.get(shipment_orig_country_norm, shipment_orig_country_norm)
+                dest_for_combo = dest_code_to_country.get(shipment_dest_country_norm, shipment_dest_country_norm)
+                combination = (orig_for_combo, dest_for_combo)
+                
+                if debug_conditions:
+                    print(f"      Checking combination: {combination}")
+                    print(f"      Available combinations (first 5): {list(unique_rc_orig_dest_combinations)[:5]}")
+                
                 if combination not in unique_rc_orig_dest_combinations:
                     comments_for_current_etofs_row.append("Origin-Destination country combination is missing")
         
@@ -825,31 +1009,46 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                                 
                 # Only report discrepancy if normalized values are different
                 if normalized_etofs_val != normalized_rate_card_val:
+                    if debug_conditions:
+                        print(f"      [DISCREPANCY CHECK] Column '{etofs_original_col}': VALUES DIFFER")
+                        print(f"         - Shipment value: '{etofs_val}' (normalized: '{normalized_etofs_val}')")
+                        print(f"         - Rate Card value: '{rate_card_val}' (normalized: '{normalized_rate_card_val}')")
+                    
                     # For postal codes: check "starts with" instead of exact match
                     if is_postal_code_column and normalized_etofs_val and normalized_rate_card_val:
                         # For postal codes: shipment value should START WITH rate card value
                         # Example: RC has "194", shipment has "19454" -> OK (starts with "194")
                         if str(normalized_etofs_val).startswith(str(normalized_rate_card_val)):
+                            if debug_conditions:
+                                print(f"         - Result: POSTAL CODE MATCH (starts with)")
                             continue  # No discrepancy - postal code matches (starts with)
                     
                     # Check if ResMed value satisfies the condition for this rate card value
                     is_valid, matching_condition = check_value_against_conditions(
-                        etofs_val, rate_card_val, etofs_original_col, conditions_dict
+                        etofs_val, rate_card_val, etofs_original_col, conditions_dict, debug=debug_conditions
                     )
                     
                     if is_valid:
                         # Value satisfies condition - don't report as discrepancy
                         # Example: Rate Card has "NAC", condition says "NAC: RATE_TYPE is empty", 
                         #          ResMed has "nan" (empty) -> This is valid, no discrepancy
+                        if debug_conditions:
+                            print(f"         - Result: CONDITION SATISFIED - No discrepancy")
+                            print(f"         - Matching condition: {matching_condition[:80] if matching_condition else 'N/A'}...")
                         pass  # Skip this discrepancy
                     else:
                         # Value doesn't match and doesn't satisfy condition - report discrepancy
+                        if debug_conditions:
+                            print(f"         - Result: DISCREPANCY FOUND")
                         discrepancies.append({
                             'column': etofs_original_col,
                             'etofs_value': etofs_val,
                             'rate_card_value': rate_card_val,
                             'condition': matching_condition
                         })
+                else:
+                    if debug_conditions:
+                        print(f"      [MATCH] Column '{etofs_original_col}': Values match ('{normalized_etofs_val}')")
             best_match_info['discrepancies'] = discrepancies
         
         # Check if any single match has more than 5 fields to update (discrepancies)
@@ -925,7 +1124,7 @@ def run_matching(rate_card_file_path=None):
     # If rate_card_file_path not provided, try to find it
     if rate_card_file_path is None:
         input_folder = "input"
-        possible_names = ["rate aptiv.xlsx", "rate_card.xls"]
+        possible_names = ["rate_resmed.xlsx", "rate_card.xls"]
         for name in possible_names:
             full_path = os.path.join(input_folder, name)
             if os.path.exists(full_path):
@@ -947,6 +1146,12 @@ def run_matching(rate_card_file_path=None):
         print(f"   Conditions loaded: {len(rate_card_conditions)} columns with conditions")
         if rate_card_conditions:
             print(f"   Columns with conditions: {list(rate_card_conditions.keys())}")
+            print(f"\n   [DEBUG] Conditions content:")
+            for col_name, cond in rate_card_conditions.items():
+                cond_preview = str(cond)[:100] + "..." if len(str(cond)) > 100 else str(cond)
+                print(f"      - {col_name}: {cond_preview}")
+        else:
+            print(f"   [DEBUG] No conditions found in rate card!")
         
     except ImportError as e:
         print(f"   [ERROR] Could not import part4_rate_card_processing: {e}")
@@ -1103,6 +1308,14 @@ def run_matching(rate_card_file_path=None):
     print("MATCHING SHIPMENTS WITH RATE CARD")
     print("="*80)
     print("Note: Values will be validated against conditional rules before reporting discrepancies.")
+    
+    # Debug: Print conditions being passed to matching function
+    print(f"\n[DEBUG] Passing conditions to matching function:")
+    print(f"   - rate_card_conditions type: {type(rate_card_conditions)}")
+    print(f"   - rate_card_conditions length: {len(rate_card_conditions) if rate_card_conditions else 0}")
+    if rate_card_conditions:
+        for col, cond in list(rate_card_conditions.items())[:3]:
+            print(f"   - '{col}': {str(cond)[:80]}...")
     
     df_result = match_shipments_with_rate_card(df_to_process, df_rate_card, common_columns, rate_card_conditions)
     
