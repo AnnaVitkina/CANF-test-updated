@@ -20,7 +20,7 @@ from datetime import datetime
 #   "Shared drives/Team Drive Name/Folder"     - Shared Drive
 #   "Shareddrives/Team Drive Name/Folder"      - Shared Drive (alternative)
 # ============================================================
-GOOGLE_DRIVE_PATH = "Shared drives/FA Operations Europe/AT/Generic AA/CANF ANALYZER/Files for analysis or issues"  # Change this to your desired path
+GOOGLE_DRIVE_PATH = "Shared drives/FA Operations Europe/AT/Generic_AA/CANF ANALYZER/Files for analysis or issues"  # Change this to your desired path
 # ============================================================
 
 
