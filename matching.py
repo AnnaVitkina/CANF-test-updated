@@ -6,11 +6,20 @@ This script:
 2. Gets ETOF and LC dataframes from vocabular.py output (partly_df/vocabulary_mapping.xlsx)
 3. Uses LC dataframe if present, otherwise uses ETOF dataframe
 4. Matches shipments with Rate Card entries and identifies discrepancies
+5. Validates business rules (e.g., Origin City -> Country + Postal Code)
 """
 
 import pandas as pd
 import os
 import re
+
+# Import business rules functions
+from part4_rate_card_processing import (
+    get_business_rules_lookup,
+    process_business_rules,
+    transform_business_rules_to_conditions,
+    find_business_rule_columns
+)
 
 def normalize_value(value):
     """Converts a value to lowercase string, removes spaces and underscores, and handles NaN.
@@ -48,6 +57,462 @@ def normalize_column_name(col_name):
     if col_name is None:
         return None
     return str(col_name).lower().replace(" ", "").replace("_", "")
+
+
+def load_business_rules_for_matching(rate_card_file_path):
+    """
+    Load business rules and create lookup structures for matching.
+    
+    Args:
+        rate_card_file_path: Path to rate card file (relative to input folder)
+    
+    Returns:
+        dict: Business rules lookup with:
+            - 'rule_to_country': {rule_name: country_code}
+            - 'rule_to_postal_codes': {rule_name: [postal_codes]}
+            - 'business_rule_columns': set of column names containing business rules
+            - 'column_to_rules': {column_name: [rule_names found in it]}
+    """
+    print(f"\n   [DEBUG] load_business_rules_for_matching called with: {rate_card_file_path}")
+    try:
+        result = get_business_rules_lookup(rate_card_file_path)
+        print(f"   [DEBUG] get_business_rules_lookup returned:")
+        print(f"      - result is None: {result is None}")
+        if result:
+            print(f"      - keys: {list(result.keys())}")
+            print(f"      - rule_to_country count: {len(result.get('rule_to_country', {}))}")
+            print(f"      - rule_to_postal_codes count: {len(result.get('rule_to_postal_codes', {}))}")
+            print(f"      - business_rule_columns: {result.get('business_rule_columns', 'NOT SET')}")
+        return result
+    except Exception as e:
+        print(f"   [WARNING] Could not load business rules: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'rule_to_country': {},
+            'rule_to_postal_codes': {},
+            'business_rule_columns': set(),
+            'column_to_rules': {}
+        }
+
+
+def find_matching_business_rule_by_geo(etof_row, business_rule_col, business_rules_lookup):
+    """
+    Find a matching business rule based on country and postal code from ETOF row.
+    Used when the business rule column value is NaN/empty - we check all rules for this column.
+    
+    Args:
+        etof_row: Row from ETOF/LC dataframe
+        business_rule_col: Name of the business rule column (e.g., 'Origin Postal Code Zone')
+        business_rules_lookup: Business rules lookup dictionary
+    
+    Returns:
+        tuple: (found_rule, validated_columns, message, failure_details)
+            - found_rule: Name of the matching rule, or None
+            - validated_columns: List of columns that were validated by this rule
+            - message: Explanation message
+            - failure_details: dict with details about why rules failed (for discrepancy reporting)
+    """
+    print(f"\n   {'='*60}")
+    print(f"   [BUSINESS RULE GEO SEARCH] Searching for matching rule...")
+    print(f"   {'='*60}")
+    print(f"   [DEBUG] Business rule column: '{business_rule_col}'")
+    
+    failure_details = {
+        'country_col': None,
+        'postal_col': None,
+        'actual_country': None,
+        'actual_postal': None,
+        'failed_rules': []  # List of (rule_name, failure_reason, expected_values)
+    }
+    
+    if not business_rules_lookup:
+        return None, [], "No business rules lookup", failure_details
+    
+    # Get rules that apply to this column
+    column_to_rules = business_rules_lookup.get('column_to_rules', {})
+    rule_to_country = business_rules_lookup.get('rule_to_country', {})
+    rule_to_postal = business_rules_lookup.get('rule_to_postal_codes', {})
+    
+    # Find rules for this column (case-insensitive)
+    rules_for_column = []
+    for col, rules in column_to_rules.items():
+        if normalize_column_name(col) == normalize_column_name(business_rule_col):
+            rules_for_column = rules
+            print(f"   [DEBUG] Found {len(rules)} rules for column '{col}'")
+            break
+    
+    if not rules_for_column:
+        print(f"   [DEBUG] No rules found for column '{business_rule_col}'")
+        return None, [], f"No rules defined for column '{business_rule_col}'", failure_details
+    
+    # Determine if this is origin or destination
+    col_lower = str(business_rule_col).lower()
+    is_origin = 'origin' in col_lower or 'ship' in col_lower or 'from' in col_lower
+    is_destination = 'destination' in col_lower or 'cust' in col_lower or 'to' in col_lower
+    
+    print(f"   [DEBUG] Column type: {'ORIGIN' if is_origin else 'DESTINATION' if is_destination else 'UNKNOWN'}")
+    
+    if is_origin:
+        country_col_variations = ['Origin Country', 'origin country', 'OriginCountry', 'ORIGIN_COUNTRY']
+        postal_col_variations = ['Origin Postal Code', 'origin postal code', 'OriginPostalCode', 'ORIGIN_POSTAL_CODE']
+    elif is_destination:
+        country_col_variations = ['Destination Country', 'destination country', 'DestinationCountry', 'DESTINATION_COUNTRY']
+        postal_col_variations = ['Destination Postal Code', 'destination postal code', 'DestinationPostalCode', 'DESTINATION_POSTAL_CODE']
+    else:
+        return None, [], f"Cannot determine origin/destination from column '{business_rule_col}'", failure_details
+    
+    # Get actual country and postal from ETOF row
+    actual_country = None
+    country_col_found = None
+    for col_var in country_col_variations:
+        if col_var in etof_row.index:
+            actual_country = etof_row.get(col_var)
+            country_col_found = col_var
+            break
+    
+    actual_postal = None
+    postal_col_found = None
+    for col_var in postal_col_variations:
+        if col_var in etof_row.index:
+            actual_postal = etof_row.get(col_var)
+            postal_col_found = col_var
+            break
+    
+    failure_details['country_col'] = country_col_found
+    failure_details['postal_col'] = postal_col_found
+    failure_details['actual_country'] = actual_country
+    failure_details['actual_postal'] = actual_postal
+    
+    print(f"   [DEBUG] ETOF country ({country_col_found}): '{actual_country}'")
+    print(f"   [DEBUG] ETOF postal ({postal_col_found}): '{actual_postal}'")
+    
+    # Try each rule and see if the ETOF row matches
+    # Track failures with same country (these are most relevant for discrepancy reporting)
+    same_country_failures = []
+    
+    for rule_name in rules_for_column:
+        print(f"\n   [DEBUG] Checking rule: '{rule_name}'")
+        
+        expected_country = rule_to_country.get(rule_name)
+        expected_postal_codes = rule_to_postal.get(rule_name, [])
+        
+        print(f"   [DEBUG]   Expected country: {expected_country}")
+        print(f"   [DEBUG]   Expected postal codes: {expected_postal_codes}")
+        
+        # Check country match
+        country_match = False
+        country_failure_reason = None
+        if expected_country and actual_country and not pd.isna(actual_country):
+            actual_country_norm = str(actual_country).strip().upper()
+            expected_country_norm = str(expected_country).strip().upper()
+            country_match = (actual_country_norm == expected_country_norm)
+            if not country_match:
+                country_failure_reason = f"Country mismatch: '{actual_country_norm}' != '{expected_country_norm}'"
+            print(f"   [DEBUG]   Country match: {country_match} ('{actual_country_norm}' vs '{expected_country_norm}')")
+        elif not expected_country:
+            country_match = True  # No country requirement
+            print(f"   [DEBUG]   Country match: True (no country requirement)")
+        else:
+            country_failure_reason = "Country missing in ETOF"
+            print(f"   [DEBUG]   Country match: False (missing actual country)")
+        
+        if not country_match:
+            failure_details['failed_rules'].append({
+                'rule_name': rule_name,
+                'failure_type': 'country',
+                'reason': country_failure_reason,
+                'expected_country': expected_country,
+                'expected_postal': expected_postal_codes
+            })
+            continue
+        
+        # Check postal code match
+        postal_match = False
+        postal_failure_reason = None
+        if expected_postal_codes and actual_postal and not pd.isna(actual_postal):
+            actual_postal_norm = str(actual_postal).strip().lower()
+            for expected_pc in expected_postal_codes:
+                expected_pc_norm = str(expected_pc).strip().lower()
+                if actual_postal_norm.startswith(expected_pc_norm):
+                    postal_match = True
+                    print(f"   [DEBUG]   Postal match: True ('{actual_postal_norm}' starts with '{expected_pc_norm}')")
+                    break
+            if not postal_match:
+                postal_failure_reason = f"Postal '{actual_postal}' doesn't start with any of {expected_postal_codes}"
+                print(f"   [DEBUG]   Postal match: False ('{actual_postal_norm}' doesn't start with any of {expected_postal_codes})")
+        elif not expected_postal_codes:
+            postal_match = True  # No postal requirement
+            print(f"   [DEBUG]   Postal match: True (no postal requirement)")
+        else:
+            postal_failure_reason = "Postal code missing in ETOF"
+            print(f"   [DEBUG]   Postal match: False (missing actual postal)")
+        
+        if country_match and postal_match:
+            # Found a matching rule!
+            validated_columns = [business_rule_col]
+            if country_col_found:
+                validated_columns.append(country_col_found)
+            if postal_col_found:
+                validated_columns.append(postal_col_found)
+            
+            print(f"\n   [DEBUG] ✓✓✓ FOUND MATCHING RULE: '{rule_name}' ✓✓✓")
+            print(f"   [DEBUG] Validated columns: {validated_columns}")
+            
+            return rule_name, validated_columns, f"Rule '{rule_name}' matches (Country={expected_country}, Postal={expected_postal_codes})", failure_details
+        
+        # Country matched but postal didn't - this is the most relevant failure
+        if country_match and not postal_match:
+            same_country_failures.append({
+                'rule_name': rule_name,
+                'failure_type': 'postal',
+                'reason': postal_failure_reason,
+                'expected_country': expected_country,
+                'expected_postal': expected_postal_codes
+            })
+            failure_details['failed_rules'].append({
+                'rule_name': rule_name,
+                'failure_type': 'postal',
+                'reason': postal_failure_reason,
+                'expected_country': expected_country,
+                'expected_postal': expected_postal_codes
+            })
+    
+    # Store same-country failures separately (these are most relevant)
+    failure_details['same_country_failures'] = same_country_failures
+    
+    print(f"\n   [DEBUG] ✗✗✗ NO MATCHING RULE FOUND ✗✗✗")
+    print(f"   [DEBUG] Same-country failures: {len(same_country_failures)}")
+    for f in same_country_failures:
+        print(f"   [DEBUG]   - Rule '{f['rule_name']}': {f['reason']}")
+    
+    return None, [], f"No matching rule found for column '{business_rule_col}'", failure_details
+
+
+def validate_business_rule(etof_row, business_rule_col, rule_value, business_rules_lookup):
+    """
+    Validate if a business rule is correctly applied based on country and postal code.
+    
+    Args:
+        etof_row: Row from ETOF/LC dataframe
+        business_rule_col: Name of the business rule column (e.g., 'Origin City')
+        rule_value: Value in the business rule column (e.g., 'Zhengzhou')
+        business_rules_lookup: Business rules lookup dictionary
+    
+    Returns:
+        tuple: (is_valid, validated_columns, message)
+            - is_valid: True if rule is correctly applied
+            - validated_columns: List of columns that were validated by this rule
+            - message: Explanation message
+    """
+    print(f"\n   {'='*60}")
+    print(f"   [BUSINESS RULE VALIDATION] Starting validation...")
+    print(f"   {'='*60}")
+    print(f"   [DEBUG] Input parameters:")
+    print(f"      - business_rule_col: '{business_rule_col}'")
+    print(f"      - rule_value: '{rule_value}'")
+    print(f"      - business_rules_lookup keys: {list(business_rules_lookup.keys()) if business_rules_lookup else 'None'}")
+    
+    if not business_rules_lookup:
+        print(f"   [DEBUG] EARLY EXIT: No lookup provided")
+        return False, [], "No business rules lookup", {}
+    
+    # If rule_value is NaN/empty, try to find a matching rule by checking geo columns
+    if rule_value is None or pd.isna(rule_value) or str(rule_value).strip().lower() in ['', 'nan', 'none']:
+        print(f"   [DEBUG] Rule value is NaN/empty, searching for matching rule by geo...")
+        found_rule, validated_cols, message, failure_details = find_matching_business_rule_by_geo(etof_row, business_rule_col, business_rules_lookup)
+        return found_rule is not None, validated_cols, message, failure_details
+    
+    rule_value_str = str(rule_value).strip()
+    rule_to_country = business_rules_lookup.get('rule_to_country', {})
+    rule_to_postal = business_rules_lookup.get('rule_to_postal_codes', {})
+    
+    print(f"   [DEBUG] Available rules with country: {list(rule_to_country.keys())[:10]}{'...' if len(rule_to_country) > 10 else ''}")
+    print(f"   [DEBUG] Available rules with postal codes: {list(rule_to_postal.keys())[:10]}{'...' if len(rule_to_postal) > 10 else ''}")
+    
+    # Try to find the rule (exact match or with suffix like "(Origin)")
+    rule_name = None
+    print(f"\n   [DEBUG] Searching for rule matching value '{rule_value_str}'...")
+    
+    for name in rule_to_country.keys():
+        name_normalized = str(name).strip().lower()
+        rule_value_normalized = rule_value_str.lower()
+        
+        # Check exact match or if rule_value is contained in the name
+        if name_normalized == rule_value_normalized or rule_value_normalized in name_normalized:
+            rule_name = name
+            print(f"   [DEBUG] FOUND MATCH in rule_to_country: '{name}' matches '{rule_value_str}'")
+            break
+    
+    if not rule_name:
+        print(f"   [DEBUG] No match found in rule_to_country, trying rule_to_postal...")
+        # Try in postal codes keys as well
+        for name in rule_to_postal.keys():
+            name_normalized = str(name).strip().lower()
+            rule_value_normalized = rule_value_str.lower()
+            if name_normalized == rule_value_normalized or rule_value_normalized in name_normalized:
+                rule_name = name
+                print(f"   [DEBUG] FOUND MATCH in rule_to_postal: '{name}' matches '{rule_value_str}'")
+                break
+    
+    if not rule_name:
+        print(f"   [DEBUG] NO RULE FOUND for value '{rule_value_str}'")
+        return False, [], f"No business rule found for '{rule_value_str}'"
+    
+    # Get expected country and postal codes from the rule
+    expected_country = rule_to_country.get(rule_name)
+    expected_postal_codes = rule_to_postal.get(rule_name, [])
+    
+    print(f"\n   [BUSINESS RULE] Found rule '{rule_name}' for value '{rule_value_str}'")
+    print(f"   [BUSINESS RULE]   Expected country: {expected_country}")
+    print(f"   [BUSINESS RULE]   Expected postal codes: {expected_postal_codes}")
+    
+    # Determine if this is origin or destination based on column name
+    col_lower = str(business_rule_col).lower()
+    is_origin = 'origin' in col_lower or 'ship' in col_lower or 'from' in col_lower
+    is_destination = 'destination' in col_lower or 'cust' in col_lower or 'to' in col_lower
+    
+    print(f"\n   [DEBUG] Column classification:")
+    print(f"      - Column name (lower): '{col_lower}'")
+    print(f"      - is_origin: {is_origin}")
+    print(f"      - is_destination: {is_destination}")
+    
+    # Find the corresponding country and postal code columns
+    validated_columns = [business_rule_col]
+    validation_passed = True
+    
+    if is_origin:
+        country_col_variations = ['Origin Country', 'origin country', 'OriginCountry', 'ORIGIN_COUNTRY', 
+                                   'Ship Country', 'SHIP_COUNTRY']
+        postal_col_variations = ['Origin Postal Code', 'origin postal code', 'OriginPostalCode', 
+                                 'ORIGIN_POSTAL_CODE', 'Ship Postal', 'SHIP_POST']
+        print(f"   [DEBUG] Using ORIGIN column variations")
+    elif is_destination:
+        country_col_variations = ['Destination Country', 'destination country', 'DestinationCountry', 
+                                  'DESTINATION_COUNTRY', 'Cust Country', 'CUST_COUNTRY']
+        postal_col_variations = ['Destination Postal Code', 'destination postal code', 'DestinationPostalCode',
+                                 'DESTINATION_POSTAL_CODE', 'Cust Postal', 'CUST_POST']
+        print(f"   [DEBUG] Using DESTINATION column variations")
+    else:
+        print(f"   [DEBUG] CANNOT DETERMINE origin/destination from column '{business_rule_col}'")
+        return False, [], f"Cannot determine origin/destination from column '{business_rule_col}'", {}
+    
+    print(f"   [DEBUG] Country column variations to search: {country_col_variations}")
+    print(f"   [DEBUG] Postal column variations to search: {postal_col_variations}")
+    print(f"   [DEBUG] Available columns in ETOF row: {list(etof_row.index)[:20]}{'...' if len(etof_row.index) > 20 else ''}")
+    
+    # Find actual country column in the row
+    actual_country = None
+    country_col_found = None
+    for col_var in country_col_variations:
+        if col_var in etof_row.index:
+            actual_country = etof_row.get(col_var)
+            country_col_found = col_var
+            print(f"   [DEBUG] Found country column '{col_var}' with value '{actual_country}'")
+            break
+    
+    if not country_col_found:
+        print(f"   [DEBUG] NO COUNTRY COLUMN FOUND in ETOF row!")
+    
+    # Find actual postal code column in the row
+    actual_postal = None
+    postal_col_found = None
+    for col_var in postal_col_variations:
+        if col_var in etof_row.index:
+            actual_postal = etof_row.get(col_var)
+            postal_col_found = col_var
+            print(f"   [DEBUG] Found postal column '{col_var}' with value '{actual_postal}'")
+            break
+    
+    if not postal_col_found:
+        print(f"   [DEBUG] NO POSTAL COLUMN FOUND in ETOF row!")
+    
+    print(f"\n   [BUSINESS RULE] VALIDATION SUMMARY:")
+    print(f"   [BUSINESS RULE]   Rule name: '{rule_name}'")
+    print(f"   [BUSINESS RULE]   Actual country ({country_col_found}): '{actual_country}'")
+    print(f"   [BUSINESS RULE]   Actual postal ({postal_col_found}): '{actual_postal}'")
+    print(f"   [BUSINESS RULE]   Expected country: '{expected_country}'")
+    print(f"   [BUSINESS RULE]   Expected postal codes: {expected_postal_codes}")
+    
+    # Validate country
+    print(f"\n   [DEBUG] VALIDATING COUNTRY...")
+    if expected_country:
+        if actual_country is not None and not pd.isna(actual_country):
+            actual_country_norm = str(actual_country).strip().upper()
+            expected_country_norm = str(expected_country).strip().upper()
+            print(f"   [DEBUG]   Comparing: '{actual_country_norm}' vs '{expected_country_norm}'")
+            if actual_country_norm == expected_country_norm:
+                if country_col_found:
+                    validated_columns.append(country_col_found)
+                print(f"   [BUSINESS RULE]   ✓ Country MATCH: {actual_country_norm} == {expected_country_norm}")
+            else:
+                validation_passed = False
+                print(f"   [BUSINESS RULE]   ✗ Country MISMATCH: {actual_country_norm} != {expected_country_norm}")
+        else:
+            validation_passed = False
+            print(f"   [BUSINESS RULE]   ✗ Country MISSING in ETOF/LC (actual_country={actual_country}, isna={pd.isna(actual_country) if actual_country is not None else 'N/A'})")
+    else:
+        print(f"   [DEBUG]   No expected country to validate (skipping)")
+    
+    # Validate postal code (if expected)
+    print(f"\n   [DEBUG] VALIDATING POSTAL CODE...")
+    if expected_postal_codes:
+        if actual_postal is not None and not pd.isna(actual_postal):
+            actual_postal_norm = str(actual_postal).strip().lower()
+            print(f"   [DEBUG]   Actual postal (normalized): '{actual_postal_norm}'")
+            # Check if actual postal starts with or matches any expected postal code
+            postal_match = False
+            for expected_pc in expected_postal_codes:
+                expected_pc_norm = str(expected_pc).strip().lower()
+                print(f"   [DEBUG]   Checking if '{actual_postal_norm}' starts with or equals '{expected_pc_norm}'...")
+                if actual_postal_norm.startswith(expected_pc_norm) or actual_postal_norm == expected_pc_norm:
+                    postal_match = True
+                    print(f"   [DEBUG]   MATCH FOUND!")
+                    break
+            
+            if postal_match:
+                if postal_col_found:
+                    validated_columns.append(postal_col_found)
+                print(f"   [BUSINESS RULE]   ✓ Postal MATCH: '{actual_postal_norm}' matches one of {expected_postal_codes}")
+            else:
+                validation_passed = False
+                print(f"   [BUSINESS RULE]   ✗ Postal MISMATCH: '{actual_postal_norm}' not in {expected_postal_codes}")
+        else:
+            # Postal code is missing but expected - might be optional
+            print(f"   [BUSINESS RULE]   ⚠ Postal MISSING in ETOF/LC (actual_postal={actual_postal}, isna={pd.isna(actual_postal) if actual_postal is not None else 'N/A'})")
+            print(f"   [DEBUG]   Postal code validation skipped (may be optional)")
+    else:
+        print(f"   [DEBUG]   No expected postal codes to validate (skipping)")
+    
+    print(f"\n   {'='*60}")
+    print(f"   [BUSINESS RULE] FINAL RESULT:")
+    print(f"   {'='*60}")
+    print(f"   [DEBUG]   validation_passed: {validation_passed}")
+    print(f"   [DEBUG]   validated_columns: {validated_columns}")
+    
+    if validation_passed:
+        msg = f"Business rule '{rule_name}' validated: Country={expected_country}, Postal={expected_postal_codes}"
+        print(f"   [BUSINESS RULE]   ✓✓✓ VALIDATION PASSED ✓✓✓")
+        print(f"   [BUSINESS RULE]   Columns to skip from discrepancy checking: {validated_columns}")
+        print(f"   {'='*60}\n")
+        return True, validated_columns, msg, {}
+    else:
+        print(f"   [BUSINESS RULE]   ✗✗✗ VALIDATION FAILED ✗✗✗")
+        print(f"   {'='*60}\n")
+        # Build failure details for when rule was specified but didn't match
+        failure_details = {
+            'country_col': country_col_found,
+            'postal_col': postal_col_found,
+            'actual_country': actual_country,
+            'actual_postal': actual_postal,
+            'failed_rules': [{
+                'rule_name': rule_name,
+                'failure_type': 'validation',
+                'expected_country': expected_country,
+                'expected_postal': expected_postal_codes
+            }]
+        }
+        return False, [], f"Business rule '{rule_name}' validation failed", failure_details
 
 
 # Note: extract_country_code is already applied in part1_etof_file_processing.py
@@ -312,6 +777,56 @@ def value_satisfies_condition(resmed_value, rate_card_value, condition_text, deb
     return False
 
 
+def find_condition_for_value(rate_card_value, column_name, conditions_dict):
+    """Find the condition text for a rate card value (even if not satisfied).
+    
+    This helps show what codes the user should enter when there's a discrepancy.
+    For example, if rate card has "Long Beach" and condition says "Long Beach: equals LGB",
+    we return the condition so we can tell the user to enter "LGB" instead.
+    
+    Returns:
+        str or None: The condition text, or None if not found
+    """
+    # Try to find column in conditions_dict (case-insensitive)
+    column_key = None
+    for key in conditions_dict.keys():
+        if normalize_column_name(key) == normalize_column_name(column_name):
+            column_key = key
+            break
+    
+    if column_key is None:
+        return None
+    
+    conditions = conditions_dict[column_key]
+    rate_card_val_str = str(rate_card_value).lower() if pd.notna(rate_card_value) else ''
+    
+    if not rate_card_val_str:
+        return None
+    
+    # Handle both string and list formats for conditions
+    if isinstance(conditions, str):
+        conditions_list = [line.strip() for line in conditions.split('\n') if line.strip()]
+    elif isinstance(conditions, list):
+        conditions_list = conditions
+    else:
+        conditions_list = [str(conditions)]
+    
+    for condition_text in conditions_list:
+        condition_lower = str(condition_text).lower()
+        
+        # Skip header lines
+        if 'conditional rules' in condition_lower and ':' not in condition_text:
+            continue
+        
+        # Check if condition is for this rate card value
+        # Pattern: (optional number + dot + space) + rate_card_value + colon
+        pattern = rf'(?:\d+\.\s*)?{re.escape(rate_card_val_str)}:'
+        if re.search(pattern, condition_lower):
+            return condition_text
+    
+    return None
+
+
 def check_value_against_conditions(resmed_value, rate_card_value, column_name, conditions_dict, debug=False):
     """Check if ResMed value satisfies any condition for the rate card value.
     
@@ -411,21 +926,62 @@ def find_common_columns(df_resmed, df_rate_card):
     """Find common columns between the two dataframes."""
     resmed_cols = set(df_resmed.columns)
     rate_card_cols = set(df_rate_card.columns)
+    
+    # Debug: Show all columns being compared
+    print(f"\n[DEBUG] Columns comparison:")
+    print(f"   ETOF/LC columns ({len(resmed_cols)}):")
+    for col in sorted(resmed_cols):
+        print(f"      - '{col}'")
+    
+    print(f"\n   Rate Card columns ({len(rate_card_cols)}):")
+    for col in sorted(rate_card_cols):
+        print(f"      - '{col}'")
+    
+    # Find common columns (exact match)
     common_cols = sorted(list(resmed_cols & rate_card_cols))
     
-    print(f"\nFound {len(common_cols)} common columns for matching:")
+    print(f"\nFound {len(common_cols)} common columns for matching (exact match):")
     for col in common_cols:
         print(f"  - {col}")
+    
+    # If no common columns found, try normalized matching
+    if not common_cols:
+        print(f"\n[DEBUG] No exact matches found. Trying normalized column matching...")
+        
+        # Normalize column names for comparison
+        resmed_normalized = {normalize_column_name(col): col for col in resmed_cols}
+        rate_card_normalized = {normalize_column_name(col): col for col in rate_card_cols}
+        
+        print(f"\n   ETOF/LC normalized columns:")
+        for norm, orig in sorted(resmed_normalized.items()):
+            print(f"      '{norm}' <- '{orig}'")
+        
+        print(f"\n   Rate Card normalized columns:")
+        for norm, orig in sorted(rate_card_normalized.items()):
+            print(f"      '{norm}' <- '{orig}'")
+        
+        # Find common normalized columns
+        common_normalized = set(resmed_normalized.keys()) & set(rate_card_normalized.keys())
+        
+        print(f"\n   Common normalized columns ({len(common_normalized)}):")
+        for norm in sorted(common_normalized):
+            etof_orig = resmed_normalized[norm]
+            rc_orig = rate_card_normalized[norm]
+            print(f"      '{norm}': ETOF='{etof_orig}', RC='{rc_orig}'")
+        
+        # Use the ETOF/LC column names for the common columns
+        common_cols = sorted([resmed_normalized[norm] for norm in common_normalized])
     
     return common_cols
 
 
-def analyze_discrepancy_patterns(all_discrepancies):
+def analyze_discrepancy_patterns(all_discrepancies, conditions_dict=None):
     """
     Analyze discrepancies to find common patterns.
     
     Args:
         all_discrepancies: List of discrepancy dictionaries, each with 'column', 'etofs_value', 'rate_card_value'
+        conditions_dict: Optional conditions dictionary for extracting codes
     
     Returns:
         tuple: (has_common_pattern, pattern_comment)
@@ -450,18 +1006,56 @@ def analyze_discrepancy_patterns(all_discrepancies):
     total_discrepancies = len(all_discrepancies)
     unique_columns = len(column_counts)
     
+    # Helper function to format a single discrepancy
+    def format_discrepancy(disc):
+        col = disc.get('column', 'Unknown')
+        etofs_val = disc.get('etofs_value', 'N/A')
+        rc_val = disc.get('rate_card_value', 'N/A')
+        condition = disc.get('condition')
+        
+        # Try to extract code from condition if available
+        target_value = rc_val
+        if condition:
+            import re
+            equals_match = re.search(r':\s*equals?\s+([^\n]+)', str(condition), re.IGNORECASE)
+            if equals_match:
+                target_value = equals_match.group(1).strip()
+        
+        return f"{col}: '{etofs_val}' -> '{target_value}'"
+    
     # If all discrepancies are for the same column - clear pattern
     if unique_columns == 1:
         column_name = list(column_counts.keys())[0]
-        return True, f"{column_name}: Shipment value needs to be changed"
+        # Get one example of what needs to change
+        example_disc = column_discrepancies[column_name][0]
+        return True, format_discrepancy(example_disc)
     
     # Check if one column dominates (has majority of discrepancies, at least 70%)
-    for col, count in column_counts.items():
-        if count / total_discrepancies >= 0.7:
-            return True, f"{col}: Shipment value needs to be changed (and {total_discrepancies - count} other minor discrepancies)"
+    sorted_columns = sorted(column_counts.items(), key=lambda x: x[1], reverse=True)
+    dominant_col, dominant_count = sorted_columns[0]
+    
+    if dominant_count / total_discrepancies >= 0.7:
+        # Get the dominant column's discrepancy
+        dominant_disc = column_discrepancies[dominant_col][0]
+        main_comment = format_discrepancy(dominant_disc)
+        
+        # Get details for the other discrepancies
+        other_details = []
+        for col, discs in column_discrepancies.items():
+            if col != dominant_col:
+                for disc in discs:
+                    other_details.append(format_discrepancy(disc))
+        
+        if other_details:
+            # Show the main issue plus the other specific issues
+            other_str = "; ".join(other_details[:3])  # Limit to 3 other issues
+            if len(other_details) > 3:
+                other_str += f" (+{len(other_details) - 3} more)"
+            return True, f"{main_comment}\nAlso: {other_str}"
+        else:
+            return True, main_comment
     
     # Check if a few columns (2-3) cover most discrepancies (80%+)
-    sorted_columns = sorted(column_counts.items(), key=lambda x: x[1], reverse=True)
     top_columns = []
     covered_count = 0
     
@@ -472,15 +1066,28 @@ def analyze_discrepancy_patterns(all_discrepancies):
             break
     
     if len(top_columns) <= 3 and covered_count / total_discrepancies >= 0.8:
-        # Format: "Column1, Column2: Shipment values need to be changed"
-        columns_str = ", ".join(top_columns)
-        return True, f"{columns_str}: Shipment values need to be changed"
+        # Format each column's discrepancy with details
+        details = []
+        for col in top_columns:
+            if col in column_discrepancies:
+                disc = column_discrepancies[col][0]
+                details.append(format_discrepancy(disc))
+        
+        return True, "\n".join(details)
     
-    # No clear pattern - all different
-    return False, "Please recheck the shipment details"
+    # No clear pattern - show all unique discrepancies (limit to 5)
+    all_details = []
+    for col, discs in column_discrepancies.items():
+        disc = discs[0]  # Take first occurrence
+        all_details.append(format_discrepancy(disc))
+    
+    if len(all_details) > 5:
+        return False, "\n".join(all_details[:5]) + f"\n(+{len(all_details) - 5} more columns)"
+    else:
+        return False, "\n".join(all_details)
 
 
-def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_columns, conditions_dict=None, debug_conditions=True):
+def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_columns, conditions_dict=None, debug_conditions=True, rate_card_file_path=None, business_rules_lookup=None):
     """Match ResMed shipments with Rate Card entries and identify discrepancies.
     
     Args:
@@ -489,8 +1096,31 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         common_columns: List of common column names
         conditions_dict: Dictionary of conditional rules from rate_card_processing.py
         debug_conditions: Enable debug output for condition checking (default: True)
+        rate_card_file_path: Path to rate card file for loading business rules
+        business_rules_lookup: Pre-loaded business rules lookup (optional, will load if not provided)
     """
     print(f"\n[DEBUG] match_shipments_with_rate_card called with debug_conditions={debug_conditions}")
+    print(f"[DEBUG] rate_card_file_path parameter: {rate_card_file_path}")
+    print(f"[DEBUG] business_rules_lookup parameter is None: {business_rules_lookup is None}")
+    
+    # Load business rules if not provided
+    if business_rules_lookup is None and rate_card_file_path:
+        print(f"\n[DEBUG] Loading business rules from {rate_card_file_path}...")
+        business_rules_lookup = load_business_rules_for_matching(rate_card_file_path)
+        print(f"[DEBUG] After loading, business_rules_lookup is None: {business_rules_lookup is None}")
+    elif business_rules_lookup is None:
+        print(f"[DEBUG] WARNING: business_rules_lookup is None and rate_card_file_path is also None/empty!")
+        print(f"[DEBUG] Business rule validation will NOT be available!")
+    
+    if business_rules_lookup:
+        print(f"\n[DEBUG] Business Rules Available in matching function:")
+        print(f"   - Rule to country mappings: {len(business_rules_lookup.get('rule_to_country', {}))}")
+        print(f"   - Rule to postal codes mappings: {len(business_rules_lookup.get('rule_to_postal_codes', {}))}")
+        print(f"   - Business rule columns: {business_rules_lookup.get('business_rule_columns', set())}")
+        if not business_rules_lookup.get('business_rule_columns'):
+            print(f"   [WARNING] business_rule_columns is EMPTY - no columns will be validated!")
+    else:
+        print(f"\n[DEBUG] WARNING: No business_rules_lookup available after all attempts!")
     
     if conditions_dict is None:
         conditions_dict = {}
@@ -660,66 +1290,95 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         comments_for_current_etofs_row = []
         
         # ===== STEP 1: Check Origin and Destination Countries =====
-        # Find origin and destination country columns (handle variations)
-        shipment_orig_country_norm = None
-        shipment_dest_country_norm = None
+        # ONLY perform country validation if country columns exist in BOTH rate card AND ETOF/LC
         
-        for col in ['Origin Country', 'origin country', 'OriginCountry', 'origincountrycode', 'ORIGIN COUNTRY CODE']:
-            if col in row_etofs:
-                shipment_orig_country_norm = normalize_value(row_etofs[col])
-                break
+        # Check if rate card has country columns
+        rate_card_has_country_cols = rc_origin_col is not None or rc_dest_col is not None
         
-        for col in ['Destination Country', 'destination country', 'DestinationCountry', 'destinationcountrycode', 'DESTINATION COUNTRY CODE']:
-            if col in row_etofs:
-                shipment_dest_country_norm = normalize_value(row_etofs[col])
-                break
-        
-        # Check if origin country is missing
-        if shipment_orig_country_norm is None:
-            comments_for_current_etofs_row.append("Origin country is missing")
-        # Check if destination country is missing
-        elif shipment_dest_country_norm is None:
-            comments_for_current_etofs_row.append("Destination country is missing")
-        # If both present, check if they exist in rate card (using conditions for code matching)
-        else:
-            # Check if origin matches (directly or via condition code mapping)
-            orig_matches = country_matches_rate_card(shipment_orig_country_norm, unique_rc_orig_countries_norm, origin_code_to_country)
-            dest_matches = country_matches_rate_card(shipment_dest_country_norm, unique_rc_dest_countries_norm, dest_code_to_country)
+        if rate_card_has_country_cols:
+            # Find origin and destination country columns (handle variations)
+            shipment_orig_country_norm = None
+            shipment_dest_country_norm = None
+            etof_orig_col_found = None
+            etof_dest_col_found = None
             
-            if debug_conditions:
-                print(f"   [DEBUG] Country matching for row {index_etofs}:")
-                print(f"      Shipment Origin: '{shipment_orig_country_norm}' -> matches: {orig_matches}")
-                print(f"      Shipment Dest: '{shipment_dest_country_norm}' -> matches: {dest_matches}")
-                if shipment_orig_country_norm in origin_code_to_country:
-                    print(f"      Origin code '{shipment_orig_country_norm}' maps to '{origin_code_to_country[shipment_orig_country_norm]}'")
-                if shipment_dest_country_norm in dest_code_to_country:
-                    print(f"      Dest code '{shipment_dest_country_norm}' maps to '{dest_code_to_country[shipment_dest_country_norm]}'")
+            for col in ['Origin Country', 'origin country', 'OriginCountry', 'origincountrycode', 'ORIGIN COUNTRY CODE']:
+                if col in row_etofs:
+                    shipment_orig_country_norm = normalize_value(row_etofs[col])
+                    etof_orig_col_found = col
+                    break
             
-            if not orig_matches and not dest_matches:
-                comments_for_current_etofs_row.append("Origin-Destination are missing")
-            elif not orig_matches:
-                orig_val = row_etofs.get('Origin Country', row_etofs.get('origin country', 'N/A'))
-                comments_for_current_etofs_row.append(f"Origin country '{orig_val}' is missing")
-            elif not dest_matches:
-                dest_val = row_etofs.get('Destination Country', row_etofs.get('destination country', 'N/A'))
-                comments_for_current_etofs_row.append(f"Destination country '{dest_val}' is missing")
-            else:
-                # Both countries exist individually (via direct match or condition), check combination
-                # Map shipment codes to rate card country names for combination check
-                orig_for_combo = origin_code_to_country.get(shipment_orig_country_norm, shipment_orig_country_norm)
-                dest_for_combo = dest_code_to_country.get(shipment_dest_country_norm, shipment_dest_country_norm)
-                combination = (orig_for_combo, dest_for_combo)
-                
+            for col in ['Destination Country', 'destination country', 'DestinationCountry', 'destinationcountrycode', 'DESTINATION COUNTRY CODE']:
+                if col in row_etofs:
+                    shipment_dest_country_norm = normalize_value(row_etofs[col])
+                    etof_dest_col_found = col
+                    break
+            
+            # Only perform country validation if ETOF/LC also has country columns
+            etof_has_country_data = etof_orig_col_found is not None or etof_dest_col_found is not None
+            
+            if etof_has_country_data:
                 if debug_conditions:
-                    print(f"      Checking combination: {combination}")
-                    print(f"      Available combinations (first 5): {list(unique_rc_orig_dest_combinations)[:5]}")
+                    print(f"\n   [DEBUG] Country validation for row {index_etofs}:")
+                    print(f"      Rate card origin col: {rc_origin_col}")
+                    print(f"      Rate card dest col: {rc_dest_col}")
+                    print(f"      ETOF origin col: {etof_orig_col_found} = '{shipment_orig_country_norm}'")
+                    print(f"      ETOF dest col: {etof_dest_col_found} = '{shipment_dest_country_norm}'")
                 
-                if combination not in unique_rc_orig_dest_combinations:
-                    comments_for_current_etofs_row.append("Origin-Destination country combination is missing")
+                # Check if origin country is missing (only if rate card expects it)
+                if rc_origin_col and shipment_orig_country_norm is None:
+                    comments_for_current_etofs_row.append("Origin country is missing")
+                # Check if destination country is missing (only if rate card expects it)
+                elif rc_dest_col and shipment_dest_country_norm is None:
+                    comments_for_current_etofs_row.append("Destination country is missing")
+                # If both present (or not required), check if they exist in rate card
+                elif shipment_orig_country_norm and shipment_dest_country_norm:
+                    # Check if origin matches (directly or via condition code mapping)
+                    orig_matches = country_matches_rate_card(shipment_orig_country_norm, unique_rc_orig_countries_norm, origin_code_to_country)
+                    dest_matches = country_matches_rate_card(shipment_dest_country_norm, unique_rc_dest_countries_norm, dest_code_to_country)
+                    
+                    if debug_conditions:
+                        print(f"      Shipment Origin: '{shipment_orig_country_norm}' -> matches: {orig_matches}")
+                        print(f"      Shipment Dest: '{shipment_dest_country_norm}' -> matches: {dest_matches}")
+                        if shipment_orig_country_norm in origin_code_to_country:
+                            print(f"      Origin code '{shipment_orig_country_norm}' maps to '{origin_code_to_country[shipment_orig_country_norm]}'")
+                        if shipment_dest_country_norm in dest_code_to_country:
+                            print(f"      Dest code '{shipment_dest_country_norm}' maps to '{dest_code_to_country[shipment_dest_country_norm]}'")
+                    
+                    if not orig_matches and not dest_matches:
+                        comments_for_current_etofs_row.append("Origin-Destination are missing")
+                    elif not orig_matches:
+                        orig_val = row_etofs.get('Origin Country', row_etofs.get('origin country', 'N/A'))
+                        comments_for_current_etofs_row.append(f"Origin country '{orig_val}' is missing")
+                    elif not dest_matches:
+                        dest_val = row_etofs.get('Destination Country', row_etofs.get('destination country', 'N/A'))
+                        comments_for_current_etofs_row.append(f"Destination country '{dest_val}' is missing")
+                    else:
+                        # Both countries exist individually (via direct match or condition), check combination
+                        # Map shipment codes to rate card country names for combination check
+                        orig_for_combo = origin_code_to_country.get(shipment_orig_country_norm, shipment_orig_country_norm)
+                        dest_for_combo = dest_code_to_country.get(shipment_dest_country_norm, shipment_dest_country_norm)
+                        combination = (orig_for_combo, dest_for_combo)
+                        
+                        if debug_conditions:
+                            print(f"      Checking combination: {combination}")
+                            print(f"      Available combinations (first 5): {list(unique_rc_orig_dest_combinations)[:5]}")
+                        
+                        if combination not in unique_rc_orig_dest_combinations:
+                            comments_for_current_etofs_row.append("Origin-Destination country combination is missing")
+            else:
+                if debug_conditions:
+                    print(f"\n   [DEBUG] Row {index_etofs}: Skipping country validation - ETOF/LC has no country columns")
+        else:
+            if debug_conditions:
+                print(f"\n   [DEBUG] Row {index_etofs}: Skipping country validation - Rate card has no country columns")
         
         # If country validation failed, skip matching and go to next row
         if comments_for_current_etofs_row:
-            df_etofs.loc[index_etofs, 'comment'] = '\n'.join(comments_for_current_etofs_row)
+            comment_text = '\n'.join(comments_for_current_etofs_row)
+            df_etofs.loc[index_etofs, 'comment'] = comment_text
+            print(f"   [COMMENT] Row {index_etofs}: Country validation failed")
+            print(f"   [COMMENT]   -> '{comment_text}'")
             continue
         
         # ===== STEP 2: Check date within validity (working fine, keep as is) =====
@@ -805,7 +1464,10 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
             # No matches found - add comment and skip to next row
             if not comments_for_current_etofs_row:
                 comments_for_current_etofs_row.append("No matching rate card entries found")
-            df_etofs.loc[index_etofs, 'comment'] = '\n'.join(comments_for_current_etofs_row)
+            comment_text = '\n'.join(comments_for_current_etofs_row)
+            df_etofs.loc[index_etofs, 'comment'] = comment_text
+            print(f"   [COMMENT] Row {index_etofs}: No matches found")
+            print(f"   [COMMENT]   -> '{comment_text}'")
             continue
         
         # ===== STEP 2: Check date within validity (working fine, keep as is) =====
@@ -905,12 +1567,152 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
             if date_invalid_count == len(best_matching_rate_card_rows) and len(best_matching_rate_card_rows) > 0:
                 print(f"      - All matches have invalid dates, skipping discrepancy checking")
                 comments_for_current_etofs_row.append(f"Date '{date_value}' is outside valid date range for all matching rate card entries")
-                df_etofs.loc[index_etofs, 'comment'] = '\n'.join(comments_for_current_etofs_row)
+                comment_text = '\n'.join(comments_for_current_etofs_row)
+                df_etofs.loc[index_etofs, 'comment'] = comment_text
+                print(f"   [COMMENT] Row {index_etofs}: Date validation failed")
+                print(f"   [COMMENT]   -> '{comment_text}'")
                 continue
         else:
             print(f"      - Skipping date validation (missing: date_col={date_col is not None}, date_value={date_value is not None}, valid_from_col={valid_from_col is not None}, valid_to_col={valid_to_col is not None})")
         
-        # ===== STEP 3: Identify discrepancies for best matching rows =====
+        # ===== STEP 3: Validate business rules and get columns to skip =====
+        print(f"\n   {'#'*70}")
+        print(f"   # STEP 3: BUSINESS RULES VALIDATION")
+        print(f"   {'#'*70}")
+        
+        # Debug: Check if business_rules_lookup is available
+        print(f"   [DEBUG] business_rules_lookup is None: {business_rules_lookup is None}")
+        if business_rules_lookup:
+            print(f"   [DEBUG] business_rules_lookup type: {type(business_rules_lookup)}")
+            print(f"   [DEBUG] business_rules_lookup keys: {list(business_rules_lookup.keys())}")
+            br_cols = business_rules_lookup.get('business_rule_columns')
+            print(f"   [DEBUG] business_rule_columns: {br_cols}")
+            print(f"   [DEBUG] business_rule_columns type: {type(br_cols)}")
+            print(f"   [DEBUG] business_rule_columns is truthy: {bool(br_cols)}")
+        else:
+            print(f"   [DEBUG] business_rules_lookup is NOT available - business rule validation will be SKIPPED")
+        
+        columns_validated_by_business_rules = set()
+        business_rule_validation_messages = []
+        
+        if business_rules_lookup and business_rules_lookup.get('business_rule_columns'):
+            print(f"   [DEBUG Row {index_etofs}] Business rules lookup available:")
+            print(f"      - rule_to_country count: {len(business_rules_lookup.get('rule_to_country', {}))}")
+            print(f"      - rule_to_postal_codes count: {len(business_rules_lookup.get('rule_to_postal_codes', {}))}")
+            print(f"      - business_rule_columns: {business_rules_lookup.get('business_rule_columns', set())}")
+            
+            business_rule_cols = business_rules_lookup.get('business_rule_columns', set())
+            print(f"\n   [DEBUG Row {index_etofs}] Checking {len(business_rule_cols)} business rule columns...")
+            
+            for br_col in business_rule_cols:
+                print(f"\n   [DEBUG] Processing business rule column: '{br_col}'")
+                
+                # Find the column in the ETOF row (handle variations)
+                br_col_value = None
+                br_col_found = None
+                
+                # Try exact match first
+                if br_col in row_etofs.index:
+                    br_col_value = row_etofs.get(br_col)
+                    br_col_found = br_col
+                    print(f"   [DEBUG]   Found exact match column '{br_col}' with value '{br_col_value}'")
+                else:
+                    # Try case-insensitive match
+                    br_col_norm = normalize_column_name(br_col)
+                    print(f"   [DEBUG]   No exact match, trying case-insensitive match for '{br_col_norm}'...")
+                    for col in row_etofs.index:
+                        if normalize_column_name(col) == br_col_norm:
+                            br_col_value = row_etofs.get(col)
+                            br_col_found = col
+                            print(f"   [DEBUG]   Found case-insensitive match: '{col}' with value '{br_col_value}'")
+                            break
+                    
+                    if not br_col_found:
+                        print(f"   [DEBUG]   Column '{br_col}' NOT FOUND in ETOF row")
+                        print(f"   [DEBUG]   Available columns: {list(row_etofs.index)[:15]}...")
+                
+                # Call validation whether the value is present or NaN
+                # If NaN, validate_business_rule will try to find a matching rule by geo columns
+                print(f"\n   [DEBUG] *** CALLING BUSINESS RULE VALIDATION ***")
+                print(f"   [DEBUG]   Column: '{br_col_found if br_col_found else br_col}'")
+                print(f"   [DEBUG]   Value: '{br_col_value}' (is NaN: {pd.isna(br_col_value) if br_col_value is not None else 'None'})")
+                
+                is_valid, validated_cols, message, failure_details = validate_business_rule(
+                    row_etofs, br_col_found if br_col_found else br_col, br_col_value, business_rules_lookup
+                )
+                
+                print(f"\n   [DEBUG] Validation result:")
+                print(f"   [DEBUG]   is_valid: {is_valid}")
+                print(f"   [DEBUG]   validated_cols: {validated_cols}")
+                print(f"   [DEBUG]   message: {message}")
+                print(f"   [DEBUG]   failure_details keys: {list(failure_details.keys()) if failure_details else 'None'}")
+                
+                if is_valid:
+                    # Add validated columns to skip set (normalize for comparison)
+                    for vc in validated_cols:
+                        normalized_vc = normalize_column_name(vc)
+                        columns_validated_by_business_rules.add(normalized_vc)
+                        print(f"   [DEBUG]   Added to skip set: '{vc}' -> '{normalized_vc}'")
+                    business_rule_validation_messages.append(f"[Business Rule Applied] {message}")
+                    print(f"   [DEBUG] ✓ Business rule validated - will skip columns: {validated_cols}")
+                else:
+                    # Business rule validation failed - add specific failure message
+                    print(f"   [DEBUG] ✗ Business rule validation FAILED: {message}")
+                    
+                    # Generate specific discrepancy message based on failure details
+                    if failure_details:
+                        same_country_failures = failure_details.get('same_country_failures', [])
+                        failed_rules = failure_details.get('failed_rules', [])
+                        country_col = failure_details.get('country_col')
+                        postal_col = failure_details.get('postal_col')
+                        actual_country = failure_details.get('actual_country')
+                        actual_postal = failure_details.get('actual_postal')
+                        
+                        if same_country_failures and postal_col:
+                            # Country matched but postal didn't - this is the real discrepancy
+                            for fail in same_country_failures:
+                                expected_postal = fail.get('expected_postal', [])
+                                rule_name = fail.get('rule_name', 'Unknown')
+                                if expected_postal:
+                                    # Add discrepancy for postal code, not for the zone column
+                                    disc_msg = f"[Business Rule Check Failed] {postal_col}: '{actual_postal}' doesn't start with {expected_postal} (required for rule '{rule_name}')"
+                                    business_rule_validation_messages.append(disc_msg)
+                                    print(f"   [DEBUG] Added failure message: {disc_msg}")
+                                    break  # Only show one failure message per column
+                        elif failed_rules and not same_country_failures:
+                            # No country matched at all - report country mismatch
+                            # Find what countries ARE expected
+                            expected_countries = set()
+                            for fail in failed_rules:
+                                ec = fail.get('expected_country')
+                                if ec:
+                                    expected_countries.add(ec)
+                            
+                            if expected_countries and country_col:
+                                disc_msg = f"[Business Rule Check Failed] {country_col}: '{actual_country}' doesn't match any rule (expected: {sorted(expected_countries)})"
+                                business_rule_validation_messages.append(disc_msg)
+                                print(f"   [DEBUG] Added country mismatch message: {disc_msg}")
+        else:
+            if not business_rules_lookup:
+                print(f"   [DEBUG Row {index_etofs}] No business_rules_lookup available")
+            else:
+                print(f"   [DEBUG Row {index_etofs}] No business_rule_columns in lookup")
+                print(f"   [DEBUG]   business_rule_columns: {business_rules_lookup.get('business_rule_columns', 'NOT SET')}")
+        
+        print(f"\n   [DEBUG Row {index_etofs}] Business rules validation complete:")
+        print(f"      - Columns validated by business rules: {columns_validated_by_business_rules}")
+        print(f"      - Validation messages: {len(business_rule_validation_messages)}")
+        
+        if columns_validated_by_business_rules:
+            print(f"\n   [DEBUG Row {index_etofs}] COLUMNS TO SKIP (validated by business rules): {columns_validated_by_business_rules}")
+        
+        # Add ALL business rule validation messages (both success AND failure)
+        if business_rule_validation_messages:
+            for br_msg in business_rule_validation_messages:
+                comments_for_current_etofs_row.append(br_msg)
+                print(f"   [COMMENT] Adding business rule message: {br_msg}")
+        
+        # ===== STEP 4: Identify discrepancies for best matching rows =====
         print(f"\n   [DEBUG Row {index_etofs}] Identifying discrepancies for {len(best_matching_rate_card_rows)} best matching rows...")
         for match_idx, best_match_info in enumerate(best_matching_rate_card_rows):
             rate_card_row_dict = best_match_info['rate_card_row']
@@ -997,6 +1799,17 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                 etofs_original_col = common_etofs_cols_original[i]
                 rate_card_original_col = common_rate_card_cols_original[i]
                 
+                # Skip columns that were validated by business rules
+                etofs_col_norm = normalize_column_name(etofs_original_col)
+                if etofs_col_norm in columns_validated_by_business_rules:
+                    if debug_conditions:
+                        print(f"\n      {'>'*40}")
+                        print(f"      [SKIPPING] Column '{etofs_original_col}' (normalized: '{etofs_col_norm}')")
+                        print(f"      [SKIPPING]   Reason: VALIDATED BY BUSINESS RULE")
+                        print(f"      [SKIPPING]   Skip set contains: {columns_validated_by_business_rules}")
+                        print(f"      {'>'*40}")
+                    continue
+                
                 etofs_val = row_etofs.get(etofs_original_col)
                 rate_card_val = rate_card_row_dict.get(rate_card_original_col)
                 
@@ -1037,14 +1850,39 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                             print(f"         - Matching condition: {matching_condition[:80] if matching_condition else 'N/A'}...")
                         pass  # Skip this discrepancy
                     else:
+                        # Check if this is a business rule column with NaN value - skip it
+                        # (the actual discrepancy is in the geo columns, not the zone column)
+                        is_business_rule_col = False
+                        if business_rules_lookup:
+                            br_cols = business_rules_lookup.get('business_rule_columns', set())
+                            for bc in br_cols:
+                                if normalize_column_name(bc) == etofs_col_norm:
+                                    is_business_rule_col = True
+                                    break
+                        
+                        if is_business_rule_col and (etofs_val is None or pd.isna(etofs_val) or str(etofs_val).strip().lower() in ['', 'nan', 'none']):
+                            if debug_conditions:
+                                print(f"         - Result: SKIPPING - Business rule column with NaN value (actual issue is in geo columns)")
+                            continue  # Skip - the real discrepancy was already reported in business rule validation
+                        
                         # Value doesn't match and doesn't satisfy condition - report discrepancy
                         if debug_conditions:
                             print(f"         - Result: DISCREPANCY FOUND")
+                        
+                        # Try to find the condition text for the rate card value (even if not satisfied)
+                        # This helps us show what codes the user should enter
+                        condition_for_rc_value = find_condition_for_value(
+                            rate_card_val, etofs_original_col, conditions_dict
+                        )
+                        
+                        if debug_conditions and condition_for_rc_value:
+                            print(f"         - Found condition for rate card value: {condition_for_rc_value[:80]}...")
+                        
                         discrepancies.append({
                             'column': etofs_original_col,
                             'etofs_value': etofs_val,
                             'rate_card_value': rate_card_val,
-                            'condition': matching_condition
+                            'condition': condition_for_rc_value
                         })
                 else:
                     if debug_conditions:
@@ -1064,7 +1902,7 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                 all_discrepancies.extend(match_info['discrepancies'])
             
             # Analyze patterns in discrepancies
-            has_common_pattern, pattern_comment = analyze_discrepancy_patterns(all_discrepancies)
+            has_common_pattern, pattern_comment = analyze_discrepancy_patterns(all_discrepancies, conditions_dict)
             comments_for_current_etofs_row.append(pattern_comment)
             
             # If there's a common pattern, also show the count of affected lanes
@@ -1088,15 +1926,39 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                             # Special formatting for date range discrepancies
                             comment = f"  {disc['column']}: Shipment value '{disc['etofs_value']}' is outside valid date range ({disc['rate_card_value']})"
                         else:
-                            comment = f" {disc['column']}: Shipment value '{disc['etofs_value']}' needs to be changed to '{disc['rate_card_value']}'"
-                            if disc.get('condition'):
-                                comment += f" (Condition: {disc['condition'][:50]}...)"  # Show first 50 chars of condition
+                            # Check if there's a condition with "equals" - extract the code from it
+                            target_value = disc['rate_card_value']
+                            condition_text = disc.get('condition')
+                            
+                            print(f"   [DEBUG DISCREPANCY] Column: '{disc['column']}'")
+                            print(f"   [DEBUG DISCREPANCY]   etofs_value: '{disc['etofs_value']}'")
+                            print(f"   [DEBUG DISCREPANCY]   rate_card_value: '{disc['rate_card_value']}'")
+                            print(f"   [DEBUG DISCREPANCY]   condition: '{condition_text}'")
+                            
+                            if condition_text:
+                                # Try to extract code from condition like "Long Beach: equals LGB" or "Long Beach: equals LGB,LAX"
+                                import re
+                                equals_match = re.search(r':\s*equals?\s+([^\n]+)', str(condition_text), re.IGNORECASE)
+                                print(f"   [DEBUG DISCREPANCY]   equals_match: {equals_match}")
+                                if equals_match:
+                                    # Get the codes (might be comma-separated like "LGB,LAX")
+                                    codes = equals_match.group(1).strip()
+                                    # Use the codes instead of the rate card value
+                                    target_value = codes
+                                    print(f"   [DEBUG DISCREPANCY]   Extracted code: '{codes}'")
+                            
+                            print(f"   [DEBUG DISCREPANCY]   Final target_value: '{target_value}'")
+                            comment = f" {disc['column']}: Shipment value '{disc['etofs_value']}' needs to be changed to '{target_value}'"
                         comments_for_current_etofs_row.append(comment)
         
         if comments_for_current_etofs_row:
-            df_etofs.loc[index_etofs, 'comment'] = '\n'.join(comments_for_current_etofs_row)
+            comment_text = '\n'.join(comments_for_current_etofs_row)
+            df_etofs.loc[index_etofs, 'comment'] = comment_text
+            print(f"   [COMMENT] Row {index_etofs}: Discrepancies found ({len(comments_for_current_etofs_row)} items)")
+            print(f"   [COMMENT]   -> '{comment_text[:100]}{'...' if len(comment_text) > 100 else ''}'")
         else:
             df_etofs.loc[index_etofs, 'comment'] = 'No discrepancies found for best match.'
+            print(f"   [COMMENT] Row {index_etofs}: No discrepancies found")
     
     return df_etofs
 
@@ -1124,7 +1986,7 @@ def run_matching(rate_card_file_path=None):
     # If rate_card_file_path not provided, try to find it
     if rate_card_file_path is None:
         input_folder = "input"
-        possible_names = ["rate_resmed.xlsx", "rate_card.xls"]
+        possible_names = ["rate_sie.xlsx", "rate_card.xls"]
         for name in possible_names:
             full_path = os.path.join(input_folder, name)
             if os.path.exists(full_path):
@@ -1162,6 +2024,22 @@ def run_matching(rate_card_file_path=None):
         import traceback
         traceback.print_exc()
         return None
+    
+    # Step 1b: Load Business Rules for matching validation
+    print("\n1b. Loading Business Rules for matching validation...")
+    business_rules_lookup = None
+    try:
+        business_rules_lookup = load_business_rules_for_matching(rate_card_file_path)
+        if business_rules_lookup:
+            print(f"   Business Rules loaded successfully:")
+            print(f"      - Rules with country: {len(business_rules_lookup.get('rule_to_country', {}))}")
+            print(f"      - Rules with postal codes: {len(business_rules_lookup.get('rule_to_postal_codes', {}))}")
+            print(f"      - Columns containing rules: {business_rules_lookup.get('business_rule_columns', set())}")
+        else:
+            print(f"   No business rules found (this is OK if the file doesn't have them)")
+    except Exception as e:
+        print(f"   [WARNING] Could not load business rules: {e}")
+        print(f"   Matching will continue without business rule validation")
     
     # Step 2: Get dataframes from vocabular.py output (partly_df/vocabulary_mapping.xlsx)
     print("\n2. Loading Shipment dataframes from vocabular.py output...")
@@ -1310,14 +2188,27 @@ def run_matching(rate_card_file_path=None):
     print("Note: Values will be validated against conditional rules before reporting discrepancies.")
     
     # Debug: Print conditions being passed to matching function
-    print(f"\n[DEBUG] Passing conditions to matching function:")
+    print(f"\n[DEBUG] Passing to matching function:")
     print(f"   - rate_card_conditions type: {type(rate_card_conditions)}")
     print(f"   - rate_card_conditions length: {len(rate_card_conditions) if rate_card_conditions else 0}")
     if rate_card_conditions:
         for col, cond in list(rate_card_conditions.items())[:3]:
             print(f"   - '{col}': {str(cond)[:80]}...")
     
-    df_result = match_shipments_with_rate_card(df_to_process, df_rate_card, common_columns, rate_card_conditions)
+    print(f"\n[DEBUG] Business rules being passed:")
+    print(f"   - rate_card_file_path: {rate_card_file_path}")
+    print(f"   - business_rules_lookup is None: {business_rules_lookup is None}")
+    if business_rules_lookup:
+        print(f"   - business_rules_lookup keys: {list(business_rules_lookup.keys())}")
+        print(f"   - business_rule_columns: {business_rules_lookup.get('business_rule_columns', 'NOT SET')}")
+    
+    df_result = match_shipments_with_rate_card(
+        df_to_process, df_rate_card, common_columns, 
+        conditions_dict=rate_card_conditions,
+        debug_conditions=True,
+        rate_card_file_path=rate_card_file_path,
+        business_rules_lookup=business_rules_lookup
+    )
     
     # Step 8: Reorder columns and save results
     print("\n8. Reordering columns and saving results...")
