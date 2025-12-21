@@ -14,7 +14,14 @@ from typing import Dict, List, Optional, Tuple
 from difflib import SequenceMatcher
 
 # Import processing functions
-from part4_rate_card_processing import process_rate_card
+from part4_rate_card_processing import (
+    process_rate_card, 
+    process_business_rules, 
+    transform_business_rules_to_conditions, 
+    find_business_rule_columns,
+    get_business_rules_lookup,
+    get_required_geo_columns
+)
 from part1_etof_file_processing import process_etof_file
 from part3_origin_file_processing import process_origin_file
 from part7_optional_order_lc_etof_mapping import process_order_lc_etof_mapping
@@ -64,10 +71,22 @@ def normalize_for_semantics(text):
     text = text.replace('destination postal code', 'cust_post')
     text = text.replace('destination postal', 'cust_post')
     text = text.replace('postal code', 'post')
+    text = text.replace('zip code', 'post')
+    text = text.replace('zip', 'post')
+    # Country mappings
+    text = text.replace('origin country', 'ship_country')
+    text = text.replace('ship country', 'ship_country')
+    text = text.replace('from country', 'ship_country')
+    text = text.replace('destination country', 'cust_country')
+    text = text.replace('cust country', 'cust_country')
+    text = text.replace('to country', 'cust_country')
     # Flow Type / Category mappings
     text = text.replace('flow type', 'category')
     text = text.replace('flowtype', 'category')
     text = text.replace('flow_type', 'category')
+    # Port / Seaport mappings
+    text = text.replace('port of loading', 'origin airport')
+    text = text.replace('port of entry', 'destination airport')
     return text
 
 
@@ -83,8 +102,28 @@ def find_semantic_match_llm(target_col, candidate_cols, threshold=0.3):
     postal_mappings = {
         'origin postal code': 'ship_post',
         'origin postal': 'ship_post',
+        'originpostalcode': 'ship_post',
+        'origin_postal_code': 'ship_post',
+        'ship postal code': 'ship_post',
+        'ship postal': 'ship_post',
+        'shippostal': 'ship_post',
+        'ship_postal': 'ship_post',
+        'from postal code': 'ship_post',
+        'from postal': 'ship_post',
+        'origin zip': 'ship_post',
+        'origin zip code': 'ship_post',
         'destination postal code': 'cust_post',
         'destination postal': 'cust_post',
+        'destinationpostalcode': 'cust_post',
+        'destination_postal_code': 'cust_post',
+        'cust postal code': 'cust_post',
+        'cust postal': 'cust_post',
+        'custpostal': 'cust_post',
+        'cust_postal': 'cust_post',
+        'to postal code': 'cust_post',
+        'to postal': 'cust_post',
+        'destination zip': 'cust_post',
+        'destination zip code': 'cust_post',
         'ship_post': 'ship_post',
         'cust_post': 'cust_post'
     }
@@ -94,6 +133,40 @@ def find_semantic_match_llm(target_col, candidate_cols, threshold=0.3):
         'flow type': 'category',
         'flowtype': 'category',
         'flow_type': 'category'
+    }
+    
+    # Direct Port / Seaport mappings
+    port_mappings = {
+        'port of loading': 'origin airport',
+        'portofloading': 'origin airport',
+        'port_of_loading': 'origin airport',
+        'pol': 'origin airport',
+        'port of entry': 'destination airport',
+        'portofentry': 'destination airport',
+        'port_of_entry': 'destination airport',
+        'poe': 'destination airport'
+    }
+    
+    # Direct Country mappings
+    country_mappings = {
+        'origin country': 'ship_country',
+        'origincountry': 'ship_country',
+        'origin_country': 'ship_country',
+        'ship country': 'ship_country',
+        'shipcountry': 'ship_country',
+        'ship_country': 'ship_country',
+        'from country': 'ship_country',
+        'fromcountry': 'ship_country',
+        'from_country': 'ship_country',
+        'destination country': 'cust_country',
+        'destinationcountry': 'cust_country',
+        'destination_country': 'cust_country',
+        'cust country': 'cust_country',
+        'custcountry': 'cust_country',
+        'cust_country': 'cust_country',
+        'to country': 'cust_country',
+        'tocountry': 'cust_country',
+        'to_country': 'cust_country'
     }
     
     # Check direct postal code mappings first
@@ -112,6 +185,24 @@ def find_semantic_match_llm(target_col, candidate_cols, threshold=0.3):
             for cand in candidate_cols:
                 cand_lower = cand.lower().strip()
                 if flow_value in cand_lower or cand_lower == flow_value:
+                    return cand, 0.95
+    
+    # Check direct Port / Seaport mappings
+    target_for_port = target_lower.replace(' ', '').replace('_', '')
+    for port_key, port_value in port_mappings.items():
+        if port_key in target_lower or port_key.replace(' ', '').replace('_', '') in target_for_port:
+            for cand in candidate_cols:
+                cand_lower = cand.lower().strip()
+                if port_value in cand_lower or port_value.replace(' ', '') in cand_lower.replace(' ', ''):
+                    return cand, 0.95
+    
+    # Check direct Country mappings
+    target_for_country = target_lower.replace(' ', '').replace('_', '')
+    for country_key, country_value in country_mappings.items():
+        if country_key in target_lower or country_key.replace(' ', '').replace('_', '') in target_for_country:
+            for cand in candidate_cols:
+                cand_lower = cand.lower().strip()
+                if country_value in cand_lower or country_value.replace(' ', '') in cand_lower.replace(' ', ''):
                     return cand, 0.95
     
     # First try exact or very close matches
@@ -384,6 +475,34 @@ def create_vocabulary_dataframe(
         if excluded_found:
             print(f"   Excluded {len(excluded_found)} columns from mapping: {excluded_found}")
             print(f"   Remaining rate card columns for mapping: {len(rate_card_columns)}")
+        
+        # Find columns that contain business rule values - skip these from semantic matching
+        business_rule_columns = set()
+        try:
+            business_rules = process_business_rules(rate_card_file_path)
+            business_rules_conditions = transform_business_rules_to_conditions(business_rules)
+            business_rule_cols_info = find_business_rule_columns(rate_card_df, business_rules_conditions)
+            business_rule_columns = business_rule_cols_info.get('unique_columns', set())
+            
+            if business_rule_columns:
+                print(f"   Found {len(business_rule_columns)} columns containing business rules (will skip semantic matching):")
+                for col in sorted(business_rule_columns):
+                    print(f"      - {col}")
+                # Remove business rule columns from rate_card_columns to skip matching
+                rate_card_columns = [col for col in rate_card_columns if col not in business_rule_columns]
+                print(f"   Remaining rate card columns for semantic matching: {len(rate_card_columns)}")
+        except Exception as e:
+            print(f"   Note: Could not process business rules: {e}")
+            business_rule_columns = set()
+        
+        # Add required geographic columns to the standard columns for mapping
+        geo_columns = get_required_geo_columns()
+        for geo_col in geo_columns:
+            if geo_col not in rate_card_columns:
+                rate_card_columns.append(geo_col)
+        print(f"   Added geographic columns for mapping: {geo_columns}")
+        print(f"   Total standard columns for mapping: {len(rate_card_columns)}")
+            
     except Exception as e:
         print(f"   Error processing rate card: {e}")
         return pd.DataFrame()
@@ -698,6 +817,34 @@ def map_and_rename_columns(
         ]
         rate_card_columns = rate_card_columns_to_map
         print(f"   Rate card columns to map: {len(rate_card_columns)}")
+        
+        # Find columns that contain business rule values - skip these from semantic matching
+        business_rule_columns = set()
+        try:
+            business_rules = process_business_rules(rate_card_file_path)
+            business_rules_conditions = transform_business_rules_to_conditions(business_rules)
+            business_rule_cols_info = find_business_rule_columns(rate_card_df, business_rules_conditions)
+            business_rule_columns = business_rule_cols_info.get('unique_columns', set())
+            
+            if business_rule_columns:
+                print(f"   Found {len(business_rule_columns)} columns containing business rules (will skip semantic matching):")
+                for col in sorted(business_rule_columns):
+                    print(f"      - {col}")
+                # Remove business rule columns from rate_card_columns to skip matching
+                rate_card_columns = [col for col in rate_card_columns if col not in business_rule_columns]
+                print(f"   Remaining rate card columns for semantic matching: {len(rate_card_columns)}")
+        except Exception as e:
+            print(f"   Note: Could not process business rules: {e}")
+            business_rule_columns = set()
+        
+        # Add required geographic columns to the standard columns for mapping
+        geo_columns = get_required_geo_columns()
+        for geo_col in geo_columns:
+            if geo_col not in rate_card_columns:
+                rate_card_columns.append(geo_col)
+        print(f"   Added geographic columns for mapping: {geo_columns}")
+        print(f"   Total standard columns for mapping: {len(rate_card_columns)}")
+            
     except Exception as e:
         print(f"   ERROR processing rate card: {e}")
         import traceback
@@ -846,6 +993,12 @@ def map_and_rename_columns(
     
     # Step 4: Rename columns and include ALL rate card columns
     all_rate_card_cols_for_output = rate_card_columns_all.copy()
+    
+    # Add geo columns to output list as well (they were added to rate_card_columns for mapping)
+    geo_columns = get_required_geo_columns()
+    for geo_col in geo_columns:
+        if geo_col not in all_rate_card_cols_for_output:
+            all_rate_card_cols_for_output.append(geo_col)
     
     etof_df_renamed = None
     lc_df_renamed = None
@@ -1068,6 +1221,57 @@ def map_and_rename_columns(
         print(f"    Final columns: {list(output_df.columns)}")
         if not output_df.empty:
             print(f"    First 3 rows:\n{output_df.head(3).to_string()}")
+        
+        # Step 10: Ensure geographic columns exist (fallback - rename variations or add empty if not mapped)
+        # These should already be mapped via semantic matching, but this ensures standard naming
+        print(f"\n  [{source_name}] Step 10: Standardizing geographic columns (Country, Postal Code)...")
+        
+        geo_columns_mapping = {
+            'Origin Country': ['Origin Country', 'origin country', 'OriginCountry', 'ORIGIN_COUNTRY', 
+                              'Ship Country', 'ship country', 'ShipCountry', 'SHIP_COUNTRY',
+                              'From Country', 'from country', 'FromCountry', 'FROM_COUNTRY'],
+            'Origin Postal Code': ['Origin Postal Code', 'origin postal code', 'OriginPostalCode', 'ORIGIN_POSTAL_CODE',
+                                   'Ship Postal', 'ship postal', 'ShipPostal', 'SHIP_POSTAL', 'SHIP_POST',
+                                   'From Postal', 'from postal', 'FromPostal', 'FROM_POSTAL',
+                                   'Origin Zip', 'origin zip', 'OriginZip', 'ORIGIN_ZIP'],
+            'Destination Country': ['Destination Country', 'destination country', 'DestinationCountry', 'DESTINATION_COUNTRY',
+                                   'Cust Country', 'cust country', 'CustCountry', 'CUST_COUNTRY',
+                                   'To Country', 'to country', 'ToCountry', 'TO_COUNTRY'],
+            'Destination Postal Code': ['Destination Postal Code', 'destination postal code', 'DestinationPostalCode', 'DESTINATION_POSTAL_CODE',
+                                        'Cust Postal', 'cust postal', 'CustPostal', 'CUST_POSTAL', 'CUST_POST',
+                                        'To Postal', 'to postal', 'ToPostal', 'TO_POSTAL',
+                                        'Destination Zip', 'destination zip', 'DestinationZip', 'DESTINATION_ZIP']
+        }
+        
+        for standard_geo_col, variations in geo_columns_mapping.items():
+            geo_col_found = False
+            found_col_name = None
+            
+            for col in output_df.columns:
+                col_str = str(col).strip()
+                col_lower = col_str.lower().replace(' ', '').replace('_', '')
+                
+                for variation in variations:
+                    var_lower = variation.lower().replace(' ', '').replace('_', '')
+                    if col_lower == var_lower:
+                        geo_col_found = True
+                        found_col_name = col
+                        break
+                if geo_col_found:
+                    break
+            
+            if geo_col_found and found_col_name != standard_geo_col:
+                # Rename to standard name
+                output_df = output_df.rename(columns={found_col_name: standard_geo_col})
+                print(f"    Renamed '{found_col_name}' -> '{standard_geo_col}'")
+            elif not geo_col_found:
+                # Add empty column
+                output_df[standard_geo_col] = None
+                final_columns.append(standard_geo_col)
+                print(f"    Added empty column: '{standard_geo_col}'")
+        
+        print(f"    After Step 10: {len(output_df)} rows, {len(output_df.columns)} columns")
+        print(f"    Final columns: {list(output_df.columns)}")
         
         return output_df
     
@@ -1399,21 +1603,21 @@ def map_and_rename_columns(
 
 # Example usage
 #if __name__ == "__main__":
- #   try:
+    #try:
         # Main function: Map and rename columns
-  #      etof_renamed, lc_renamed, origin_renamed = map_and_rename_columns(
-    #        rate_card_file_path="rate_coty.xlsx",
-    #        etof_file_path="etofs_coty.xlsx",
+        #etof_renamed, lc_renamed, origin_renamed = map_and_rename_columns(
+           # rate_card_file_path="rate_sie.xlsx",
+           # etof_file_path="etofs_sie.xlsx",
             #origin_file_path="file_dairb.xlsx",
             #origin_header_row=16,
             #origin_end_column=33,
             #order_files_path="Order_files_export.xls.xlsx",
             #lc_input_path="lc_dairb.xml",
             #ignore_rate_card_columns=["Business Unit Name", "Remark"],
-      #      shipper_id="coty"  # Custom logic: maps "SHAI Reference" to "SHIPMENT_ID" for dairb
-     #   )
-   # except Exception:
-   #     pass  
+            #shipper_id="sie"  # Custom logic: maps "SHAI Reference" to "SHIPMENT_ID" for dairb
+    #    )
+  #  except Exception:
+    #    pass  
 
  
 
