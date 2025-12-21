@@ -31,13 +31,15 @@ def process_etof_file(file_path):
     # Rename duplicate columns
     new_column_names = {
         'Country code': 'Origin Country',
-        'Postal code': 'Origin postal code',
-        'Airport': 'Origin airport',
-        'City': 'Origin city',
+        'Postal code': 'Origin Postal Code',
+        'Airport': 'Origin Airport',
+        'City': 'Origin City',
         'Country code.1': 'Destination Country',
-        'Postal code.1': 'Destination postal code',
-        'Airport.1': 'Destination airport',
-        'City.1': 'Destination city',
+        'Postal code.1': 'Destination Postal Code',
+        'Airport.1': 'Destination Airport',
+        'City.1': 'Destination City',
+        'Seaport': 'Origin Seaport',
+        'Seaport.1': 'Destination Seaport'
     }
     df_etofs = df_etofs.rename(columns=new_column_names, inplace=False)
     
@@ -65,5 +67,6 @@ def process_etof_file(file_path):
     return df_etofs, column_names
 
 #if __name__ == "__main__":
-#    etof_dataframe, etof_column_names = process_etof_file("resmed_etofs.xlsx")
-#    save_dataframe_to_excel(etof_dataframe, "etof_processed_resmed.xlsx")
+#    etof_dataframe, etof_column_names = process_etof_file('etofs_sie.xlsx')
+#    save_dataframe_to_excel(etof_dataframe, "etof_processed_sie.xlsx")
+#    print(etof_dataframe.head())
