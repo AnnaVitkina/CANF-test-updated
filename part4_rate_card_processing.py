@@ -747,7 +747,7 @@ def save_rate_card_output(file_path, output_path=None):
 
 if __name__ == "__main__":
     # Set the input file to process (change this to switch files)
-    INPUT_FILE = "rate_sie.xlsx"
+    INPUT_FILE = "rate_card.xlsx"
     
     # Process and save to Excel
     output_file = save_rate_card_output(INPUT_FILE)
@@ -784,4 +784,5 @@ if __name__ == "__main__":
     for col in sorted(business_rule_columns['unique_columns']):
         rules_count = len(business_rule_columns['column_to_rules'].get(col, []))
         print(f"  - {col}: {rules_count} rules")
+
 
