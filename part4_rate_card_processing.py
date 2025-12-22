@@ -375,6 +375,7 @@ def transform_business_rules_to_conditions(business_rules):
     Returns:
         dict: Dictionary mapping zone/region names to their conditions
               Format: {zone_name: {'country': 'XX', 'postal_codes': ['12', '34'], 'exclude': bool}}
+              Note: For country_regions, postal_codes will be empty (only country is validated)
     """
     conditions = {}
     
@@ -383,10 +384,14 @@ def transform_business_rules_to_conditions(business_rules):
         if not name:
             continue
         
+        section = rule.get('section', '')
+        
         # Parse postal codes (comma-separated, possibly with spaces)
+        # For country_regions, we don't use postal codes - only country matters
         postal_code_str = rule.get('postal_code', '')
         postal_codes = []
-        if postal_code_str:
+        
+        if section != 'country_regions' and postal_code_str:
             # Split by comma and clean up each code
             postal_codes = [code.strip() for code in str(postal_code_str).split(',') if code.strip()]
         
@@ -398,11 +403,11 @@ def transform_business_rules_to_conditions(business_rules):
             is_exclude = exclude_str in ['yes', 'true', '1', 'x', 'exclude']
         
         condition = {
-            'section': rule.get('section'),
+            'section': section,
             'country': rule.get('country'),
             'postal_codes': postal_codes,
             'exclude': is_exclude,
-            'raw_postal_code': postal_code_str
+            'raw_postal_code': postal_code_str if section != 'country_regions' else ''
         }
         
         conditions[name] = condition
@@ -753,36 +758,35 @@ if __name__ == "__main__":
     output_file = save_rate_card_output(INPUT_FILE)
     
     # Also print to console
-    rate_card_dataframe, rate_card_column_names, rate_card_conditions = process_rate_card(INPUT_FILE)
-    print("\nDataFrame shape:", rate_card_dataframe.shape)
-    print("\nColumn names:")
-    print(rate_card_column_names)
-    print("\nConditions (cleaned):")
-    for col, condition in rate_card_conditions.items():
-        cleaned = clean_condition_text(condition)
-        print(f"  {col}: {cleaned[:100]}..." if len(cleaned) > 100 else f"  {col}: {cleaned}")
+   # rate_card_dataframe, rate_card_column_names, rate_card_conditions = process_rate_card(INPUT_FILE)
+    #print("\nDataFrame shape:", rate_card_dataframe.shape)
+   #print("\nColumn names:")
+   # print(rate_card_column_names)
+   # print("\nConditions (cleaned):")
+   # for col, condition in rate_card_conditions.items():
+   #     cleaned = clean_condition_text(condition)
+   #     print(f"  {col}: {cleaned[:100]}..." if len(cleaned) > 100 else f"  {col}: {cleaned}")
     
     # Print Business Rules
-    print("\n" + "="*60)
-    print("BUSINESS RULES")
-    print("="*60)
-    business_rules = process_business_rules(INPUT_FILE)
-    business_rules_conditions = transform_business_rules_to_conditions(business_rules)
+   # print("\n" + "="*60)
+   # print("BUSINESS RULES")
+   # print("="*60)
+   # business_rules = process_business_rules(INPUT_FILE)
+   # business_rules_conditions = transform_business_rules_to_conditions(business_rules)
     
-    print(f"\nParsed {len(business_rules_conditions)} business rules:")
-    for rule_name, condition in business_rules_conditions.items():
-        formatted = format_business_rule_condition(rule_name, condition)
-        print(f"  {rule_name}: {formatted}")
+    #print(f"\nParsed {len(business_rules_conditions)} business rules:")
+    #for rule_name, condition in business_rules_conditions.items():
+    #    formatted = format_business_rule_condition(rule_name, condition)
+    #    print(f"  {rule_name}: {formatted}")
     
     # Find and print which columns contain business rules
-    print("\n" + "="*60)
-    print("BUSINESS RULE COLUMNS IN RATE CARD")
-    print("="*60)
-    business_rule_columns = find_business_rule_columns(rate_card_dataframe, business_rules_conditions)
+    #print("\n" + "="*60)
+    #print("BUSINESS RULE COLUMNS IN RATE CARD")
+    #print("="*60)
+   # business_rule_columns = find_business_rule_columns(rate_card_dataframe, business_rules_conditions)
     
-    print(f"\nUnique columns containing business rule values:")
-    for col in sorted(business_rule_columns['unique_columns']):
-        rules_count = len(business_rule_columns['column_to_rules'].get(col, []))
-        print(f"  - {col}: {rules_count} rules")
-
+   # print(f"\nUnique columns containing business rule values:")
+   # for col in sorted(business_rule_columns['unique_columns']):
+   #     rules_count = len(business_rule_columns['column_to_rules'].get(col, []))
+   #     print(f"  - {col}: {rules_count} rules")
 
