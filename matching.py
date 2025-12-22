@@ -975,20 +975,22 @@ def find_common_columns(df_resmed, df_rate_card):
     return common_cols
 
 
-def analyze_discrepancy_patterns(all_discrepancies):
+def analyze_discrepancy_patterns(all_discrepancies, conditions_dict=None):
     """
     Analyze discrepancies to find common patterns.
     
     Args:
         all_discrepancies: List of discrepancy dictionaries, each with 'column', 'etofs_value', 'rate_card_value'
+        conditions_dict: Dictionary of conditional rules (for extracting codes from conditions)
     
     Returns:
-        tuple: (has_common_pattern, pattern_comment)
+        tuple: (has_common_pattern, pattern_comment, minor_discrepancies)
             - has_common_pattern: True if there's a common pattern, False if all different
             - pattern_comment: The summarized comment based on the pattern
+            - minor_discrepancies: List of discrepancies for "Also" section (or empty list)
     """
     if not all_discrepancies:
-        return False, "Please recheck the shipment details"
+        return False, "Please recheck the shipment details", []
     
     # Group discrepancies by column name
     column_counts = {}
@@ -1008,12 +1010,19 @@ def analyze_discrepancy_patterns(all_discrepancies):
     # If all discrepancies are for the same column - clear pattern
     if unique_columns == 1:
         column_name = list(column_counts.keys())[0]
-        return True, f"{column_name}: Shipment value needs to be changed"
+        return True, f"{column_name}: Shipment value needs to be changed", []
     
     # Check if one column dominates (has majority of discrepancies, at least 70%)
     for col, count in column_counts.items():
         if count / total_discrepancies >= 0.7:
-            return True, f"{col}: Shipment value needs to be changed (and {total_discrepancies - count} other minor discrepancies)"
+            # Collect minor discrepancies (from other columns)
+            minor_discs = []
+            for other_col, discs in column_discrepancies.items():
+                if other_col != col:
+                    # Get unique discrepancies for this column (first one as representative)
+                    if discs:
+                        minor_discs.append(discs[0])
+            return True, f"{col}: Shipment value needs to be changed", minor_discs
     
     # Check if a few columns (2-3) cover most discrepancies (80%+)
     sorted_columns = sorted(column_counts.items(), key=lambda x: x[1], reverse=True)
@@ -1029,10 +1038,10 @@ def analyze_discrepancy_patterns(all_discrepancies):
     if len(top_columns) <= 3 and covered_count / total_discrepancies >= 0.8:
         # Format: "Column1, Column2: Shipment values need to be changed"
         columns_str = ", ".join(top_columns)
-        return True, f"{columns_str}: Shipment values need to be changed"
+        return True, f"{columns_str}: Shipment values need to be changed", []
     
     # No clear pattern - all different
-    return False, "Please recheck the shipment details"
+    return False, "Please recheck the shipment details", []
 
 
 def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_columns, conditions_dict=None, debug_conditions=True, rate_card_file_path=None, business_rules_lookup=None):
@@ -1850,11 +1859,25 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                 all_discrepancies.extend(match_info['discrepancies'])
             
             # Analyze patterns in discrepancies
-            has_common_pattern, pattern_comment = analyze_discrepancy_patterns(all_discrepancies)
+            has_common_pattern, pattern_comment, minor_discrepancies = analyze_discrepancy_patterns(all_discrepancies, conditions_dict)
             comments_for_current_etofs_row.append(pattern_comment)
             
-            # If there's a common pattern, also show the count of affected lanes
+            # If there's a common pattern, show "Also" for minor discrepancies with specific values
             if has_common_pattern:
+                # Add "Also" lines for minor discrepancies
+                for minor_disc in minor_discrepancies:
+                    target_value = minor_disc.get('rate_card_value', '')
+                    condition_text = minor_disc.get('condition')
+                    
+                    # Try to extract code from condition
+                    if condition_text:
+                        equals_match = re.search(r':\s*equals?\s+([^\n]+)', str(condition_text), re.IGNORECASE)
+                        if equals_match:
+                            target_value = equals_match.group(1).strip()
+                    
+                    also_comment = f"Also: {minor_disc.get('column', 'Unknown')}: '{minor_disc.get('etofs_value', '')}' → '{target_value}'"
+                    comments_for_current_etofs_row.append(also_comment)
+                
                 comments_for_current_etofs_row.append(f"({len(best_matching_rate_card_rows)} possible rate lanes can be applied with this change)")
         
         # Check if "please recheck the shipment details" is already in comments
