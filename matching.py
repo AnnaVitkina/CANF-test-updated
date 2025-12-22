@@ -975,13 +975,12 @@ def find_common_columns(df_resmed, df_rate_card):
     return common_cols
 
 
-def analyze_discrepancy_patterns(all_discrepancies, conditions_dict=None):
+def analyze_discrepancy_patterns(all_discrepancies):
     """
     Analyze discrepancies to find common patterns.
     
     Args:
         all_discrepancies: List of discrepancy dictionaries, each with 'column', 'etofs_value', 'rate_card_value'
-        conditions_dict: Optional conditions dictionary for extracting codes
     
     Returns:
         tuple: (has_common_pattern, pattern_comment)
@@ -1006,56 +1005,18 @@ def analyze_discrepancy_patterns(all_discrepancies, conditions_dict=None):
     total_discrepancies = len(all_discrepancies)
     unique_columns = len(column_counts)
     
-    # Helper function to format a single discrepancy
-    def format_discrepancy(disc):
-        col = disc.get('column', 'Unknown')
-        etofs_val = disc.get('etofs_value', 'N/A')
-        rc_val = disc.get('rate_card_value', 'N/A')
-        condition = disc.get('condition')
-        
-        # Try to extract code from condition if available
-        target_value = rc_val
-        if condition:
-            import re
-            equals_match = re.search(r':\s*equals?\s+([^\n]+)', str(condition), re.IGNORECASE)
-            if equals_match:
-                target_value = equals_match.group(1).strip()
-        
-        return f"{col}: '{etofs_val}' -> '{target_value}'"
-    
     # If all discrepancies are for the same column - clear pattern
     if unique_columns == 1:
         column_name = list(column_counts.keys())[0]
-        # Get one example of what needs to change
-        example_disc = column_discrepancies[column_name][0]
-        return True, format_discrepancy(example_disc)
+        return True, f"{column_name}: Shipment value needs to be changed"
     
     # Check if one column dominates (has majority of discrepancies, at least 70%)
-    sorted_columns = sorted(column_counts.items(), key=lambda x: x[1], reverse=True)
-    dominant_col, dominant_count = sorted_columns[0]
-    
-    if dominant_count / total_discrepancies >= 0.7:
-        # Get the dominant column's discrepancy
-        dominant_disc = column_discrepancies[dominant_col][0]
-        main_comment = format_discrepancy(dominant_disc)
-        
-        # Get details for the other discrepancies
-        other_details = []
-        for col, discs in column_discrepancies.items():
-            if col != dominant_col:
-                for disc in discs:
-                    other_details.append(format_discrepancy(disc))
-        
-        if other_details:
-            # Show the main issue plus the other specific issues
-            other_str = "; ".join(other_details[:3])  # Limit to 3 other issues
-            if len(other_details) > 3:
-                other_str += f" (+{len(other_details) - 3} more)"
-            return True, f"{main_comment}\nAlso: {other_str}"
-        else:
-            return True, main_comment
+    for col, count in column_counts.items():
+        if count / total_discrepancies >= 0.7:
+            return True, f"{col}: Shipment value needs to be changed (and {total_discrepancies - count} other minor discrepancies)"
     
     # Check if a few columns (2-3) cover most discrepancies (80%+)
+    sorted_columns = sorted(column_counts.items(), key=lambda x: x[1], reverse=True)
     top_columns = []
     covered_count = 0
     
@@ -1066,25 +1027,12 @@ def analyze_discrepancy_patterns(all_discrepancies, conditions_dict=None):
             break
     
     if len(top_columns) <= 3 and covered_count / total_discrepancies >= 0.8:
-        # Format each column's discrepancy with details
-        details = []
-        for col in top_columns:
-            if col in column_discrepancies:
-                disc = column_discrepancies[col][0]
-                details.append(format_discrepancy(disc))
-        
-        return True, "\n".join(details)
+        # Format: "Column1, Column2: Shipment values need to be changed"
+        columns_str = ", ".join(top_columns)
+        return True, f"{columns_str}: Shipment values need to be changed"
     
-    # No clear pattern - show all unique discrepancies (limit to 5)
-    all_details = []
-    for col, discs in column_discrepancies.items():
-        disc = discs[0]  # Take first occurrence
-        all_details.append(format_discrepancy(disc))
-    
-    if len(all_details) > 5:
-        return False, "\n".join(all_details[:5]) + f"\n(+{len(all_details) - 5} more columns)"
-    else:
-        return False, "\n".join(all_details)
+    # No clear pattern - all different
+    return False, "Please recheck the shipment details"
 
 
 def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_columns, conditions_dict=None, debug_conditions=True, rate_card_file_path=None, business_rules_lookup=None):
@@ -1902,7 +1850,7 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                 all_discrepancies.extend(match_info['discrepancies'])
             
             # Analyze patterns in discrepancies
-            has_common_pattern, pattern_comment = analyze_discrepancy_patterns(all_discrepancies, conditions_dict)
+            has_common_pattern, pattern_comment = analyze_discrepancy_patterns(all_discrepancies)
             comments_for_current_etofs_row.append(pattern_comment)
             
             # If there's a common pattern, also show the count of affected lanes
