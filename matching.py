@@ -1013,7 +1013,20 @@ def analyze_discrepancy_patterns(all_discrepancies):
     # Check if one column dominates (has majority of discrepancies, at least 70%)
     for col, count in column_counts.items():
         if count / total_discrepancies >= 0.7:
-            return True, f"{col}: Shipment value needs to be changed (and {total_discrepancies - count} other minor discrepancies)"
+            # Get details of the other discrepancies
+            other_discrepancies = []
+            for other_col, discs in column_discrepancies.items():
+                if other_col != col:
+                    for disc in discs:
+                        etofs_val = disc.get('etofs_value', 'N/A')
+                        rc_val = disc.get('rate_card_value', 'N/A')
+                        other_discrepancies.append(f"{other_col}: '{etofs_val}' → '{rc_val}'")
+            
+            if other_discrepancies:
+                other_details = "; ".join(other_discrepancies)
+                return True, f"{col}: Shipment value needs to be changed\nAlso: {other_details}"
+            else:
+                return True, f"{col}: Shipment value needs to be changed"
     
     # Check if a few columns (2-3) cover most discrepancies (80%+)
     sorted_columns = sorted(column_counts.items(), key=lambda x: x[1], reverse=True)
