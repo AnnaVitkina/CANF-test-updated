@@ -1957,7 +1957,7 @@ def run_matching(rate_card_file_path=None):
     # If rate_card_file_path not provided, try to find it
     if rate_card_file_path is None:
         input_folder = "input"
-        possible_names = ["rate_sie.xlsx", "rate_card.xls"]
+        possible_names = ["rate_dairb_2.xlsx", "rate_card.xls"]
         for name in possible_names:
             full_path = os.path.join(input_folder, name)
             if os.path.exists(full_path):
