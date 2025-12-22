@@ -699,16 +699,14 @@ with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
     with gr.Row():
         rate_card_input = gr.File(label="Rate Card File (.xlsx) *Required", file_types=[".xlsx", ".xls"])
         etof_input = gr.File(label="ETOF File (.xlsx) *Required", file_types=[".xlsx", ".xls"])
-    with gr.Row():
-        lc_input = gr.File(label="LC File(s) - upload multiple times to add more", file_types=[".xlsx", ".xls", ".xml"], file_count="multiple")
-        lc_folder_input = gr.File(label="LC Folder - only LC*.xml files will be used", file_count="directory")
+        lc_input = gr.File(label="LC Files/Folder - drag folder or files (only LC*.xml used)", file_count="multiple")
     with gr.Row():
         origin_input = gr.File(label="Origin File (.xlsx, .csv, .edi) *Optional", file_types=[".xlsx", ".xls", ".csv", ".edi"])
         order_files_input = gr.File(label="Order Files Export (.xlsx) *Optional", file_types=[".xlsx", ".xls", ".csv"])
         shipper_id_input = gr.Textbox(label="Shipper ID *Required", placeholder="e.g. dairb or use Shipper short name as string")
     
     def accumulate_lc_files(new_files, current_files):
-        """Accumulate LC files - add new uploads to existing list."""
+        """Accumulate LC files - add new uploads to existing list. Only LC*.xml files are added."""
         if current_files is None:
             current_files = []
         if new_files is None:
@@ -716,22 +714,6 @@ with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
         if not isinstance(new_files, list):
             new_files = [new_files]
         for f in new_files:
-            if f is not None:
-                file_path = f.name if hasattr(f, 'name') else f
-                existing = [os.path.basename(ef.name if hasattr(ef, 'name') else ef) for ef in current_files]
-                if os.path.basename(file_path) not in existing:
-                    current_files.append(f)
-        return current_files
-    
-    def accumulate_lc_folder(folder_files, current_files):
-        """Accumulate LC files from folder - only LC*.xml files are added."""
-        if current_files is None:
-            current_files = []
-        if folder_files is None:
-            return current_files
-        if not isinstance(folder_files, list):
-            folder_files = [folder_files]
-        for f in folder_files:
             if f is not None:
                 file_path = f.name if hasattr(f, 'name') else f
                 filename = os.path.basename(file_path)
@@ -745,12 +727,6 @@ with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
     lc_input.change(
         fn=accumulate_lc_files,
         inputs=[lc_input, lc_files_state],
-        outputs=[lc_files_state]
-    )
-    
-    lc_folder_input.change(
-        fn=accumulate_lc_folder,
-        inputs=[lc_folder_input, lc_files_state],
         outputs=[lc_files_state]
     )
     
