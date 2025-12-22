@@ -635,17 +635,17 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
     return (final_file_path, status_text) if final_file_path and os.path.exists(final_file_path) else (None, status_text)
 
 # ---- Gradio UI definition for Google Colab ----
-with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
-    gr.Markdown("# 📊 CANF Analyzer")
-    gr.Markdown("### Process and match shipment data with rate card lanes")
+with gr.Blocks(title="ETOF/LC/Rate Card/Order Workflow", theme=gr.themes.Soft()) as demo:
+    gr.Markdown("# 📊 ETOF/LC/Rate Card/Order Workflow Processor")
+    gr.Markdown("### Process and match shipment data with rate cards")
     
     with gr.Accordion("📖 Instructions & Information", open=False):
         gr.Markdown("""
         ## How to Use This Workflow
         
         ### Step 1: Upload Required Files
-        - **Rate Card File** (Required): Excel file containing rate card data (.xlsx)
-        - **ETOF File** (Required): Excel file containing ETOF shipment data (.xlsx or)
+        - **Rate Card File** (Required): Excel file containing rate card data (.xlsx or .xls)
+        - **ETOF File** (Required): Excel file containing ETOF shipment data (.xlsx or .xls)
         - **Shipper ID** (Required): Enter the shipper identifier (e.g., "dairb")
         
         ### Step 2: Upload Optional Files (if available)
@@ -694,13 +694,90 @@ with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
     gr.Markdown("### 📁 File Upload")
     gr.Markdown("**Required:** Rate Card File, ETOF File, and Shipper ID  |  **Optional:** LC File(s), Origin File, Order Files")
     with gr.Row():
-        rate_card_input = gr.File(label="Rate Card File (.xlsx) *Required", file_types=[".xlsx", ".xls"])
-        etof_input = gr.File(label="ETOF File (.xlsx) *Required", file_types=[".xlsx", ".xls"])
-        lc_input = gr.File(label="LC File(s) (.xml) *Optional", file_types=[".xlsx", ".xls", ".xml"], file_count="multiple")
+        rate_card_input = gr.File(label="Rate Card File (.xlsx, .xls) *Required", file_types=[".xlsx", ".xls"])
+        etof_input = gr.File(label="ETOF File (.xlsx, .xls) *Required", file_types=[".xlsx", ".xls"])
+    
+    # LC Files section with ability to add more files
+    gr.Markdown("#### LC Files (Optional - You can add multiple files)")
+    
+    # State to store accumulated LC files
+    lc_files_state = gr.State([])
+    
     with gr.Row():
-        origin_input = gr.File(label="Origin File (.xlsx, .csv, .edi) *Optional", file_types=[".xlsx", ".xls", ".csv", ".edi"])
-        order_files_input = gr.File(label="Order Files Export (.xlsx) *Optional", file_types=[".xlsx", ".xls", ".csv"])
-        shipper_id_input = gr.Textbox(label="Shipper ID *Required", placeholder="e.g. dairb or use Shipper short name as string")
+        lc_input = gr.File(
+            label="Upload LC File(s) (.xlsx, .xls, .xml)", 
+            file_types=[".xlsx", ".xls", ".xml"], 
+            file_count="multiple"
+        )
+        with gr.Column():
+            add_lc_btn = gr.Button("➕ Add to LC Files", variant="secondary")
+            clear_lc_btn = gr.Button("🗑️ Clear All LC Files", variant="stop")
+    
+    lc_files_display = gr.Textbox(
+        label="📂 Accumulated LC Files", 
+        value="No LC files added yet",
+        interactive=False,
+        lines=3
+    )
+    
+    def add_lc_files(new_files, current_files):
+        """Add new LC files to the accumulated list."""
+        if current_files is None:
+            current_files = []
+        
+        if new_files is None:
+            return current_files, format_lc_files_display(current_files), None
+        
+        # Handle single file or list of files
+        if not isinstance(new_files, list):
+            new_files = [new_files]
+        
+        # Add new files to the list
+        for f in new_files:
+            if f is not None:
+                # Get file path
+                file_path = f.name if hasattr(f, 'name') else f
+                # Avoid duplicates based on filename
+                existing_names = [os.path.basename(ef.name if hasattr(ef, 'name') else ef) for ef in current_files]
+                new_name = os.path.basename(file_path)
+                if new_name not in existing_names:
+                    current_files.append(f)
+        
+        return current_files, format_lc_files_display(current_files), None
+    
+    def clear_lc_files():
+        """Clear all accumulated LC files."""
+        return [], "No LC files added yet", None
+    
+    def format_lc_files_display(files):
+        """Format the list of files for display."""
+        if not files:
+            return "No LC files added yet"
+        
+        file_names = []
+        for i, f in enumerate(files, 1):
+            name = os.path.basename(f.name if hasattr(f, 'name') else f)
+            file_names.append(f"{i}. {name}")
+        
+        return f"📁 {len(files)} file(s) added:\n" + "\n".join(file_names)
+    
+    # Connect buttons
+    add_lc_btn.click(
+        fn=add_lc_files,
+        inputs=[lc_input, lc_files_state],
+        outputs=[lc_files_state, lc_files_display, lc_input]
+    )
+    
+    clear_lc_btn.click(
+        fn=clear_lc_files,
+        inputs=[],
+        outputs=[lc_files_state, lc_files_display, lc_input]
+    )
+    
+    with gr.Row():
+        origin_input = gr.File(label="Origin File (.xlsx, .xls, .csv, .edi) *Optional", file_types=[".xlsx", ".xls", ".csv", ".edi"])
+        order_files_input = gr.File(label="Order Files Export (.xlsx, .xls, .csv) *Optional", file_types=[".xlsx", ".xls", ".csv"])
+        shipper_id_input = gr.Textbox(label="Shipper ID *Required", placeholder="e.g. dairb or use ID as string")
     
     # Origin file parameters (shown conditionally)
     with gr.Row(visible=False) as origin_params_row:
@@ -714,7 +791,7 @@ with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
         origin_end_column_input = gr.Number(
             label="Origin File End Column (1-indexed, like Excel)",
             value=None,
-            info="Last column to read (e.g., 33 - will be read 33 first columns). Leave empty to read all columns.",
+            info="Last column to read (e.g., 33 for columns A through 33). Leave empty to read all columns.",
             precision=0,
             minimum=1
         )
@@ -727,7 +804,7 @@ with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
     )
     
     gr.Markdown("---")
-    launch_button = gr.Button("🚀 Run Analyzer", variant="primary", size="lg")
+    launch_button = gr.Button("🚀 Run Full Workflow", variant="primary", size="lg")
     
     with gr.Row():
         out = gr.File(label="📥 Result.xlsx (Download Final Output)")
@@ -751,9 +828,12 @@ with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
         outputs=[origin_params_row]
     )
 
-    def launch_workflow(rate_card_file, etof_file, lc_file, origin_file, order_files, shipper_id,
+    def launch_workflow(rate_card_file, etof_file, lc_files_accumulated, origin_file, order_files, shipper_id,
                        origin_header_row, origin_end_column, ignore_rate_card_columns):
         try:
+            # Use accumulated LC files from state
+            lc_file = lc_files_accumulated if lc_files_accumulated else None
+            
             result_file, status_text = run_full_workflow_gradio(
                 rate_card_file, etof_file, lc_file, origin_file, order_files, shipper_id,
                 origin_header_row=origin_header_row,
@@ -769,7 +849,7 @@ with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
     launch_button.click(
         launch_workflow,
         inputs=[
-            rate_card_input, etof_input, lc_input, origin_input, order_files_input, shipper_id_input,
+            rate_card_input, etof_input, lc_files_state, origin_input, order_files_input, shipper_id_input,
             origin_header_row_input, origin_end_column_input, ignore_rate_card_columns_input
         ],
         outputs=[out, status_output]
@@ -777,55 +857,314 @@ with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
 
 if __name__ == "__main__":
     import sys
+    import socket
+    import traceback
+    from datetime import datetime
     
-    # Create input and output folders when program starts
-    # Handle Colab environment where __file__ is not defined
+    print("=" * 80)
+    print("🔍 GRADIO LAUNCH DIAGNOSTICS")
+    print("=" * 80)
+    print(f"⏰ Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print()
+    
+    # ========================================================================
+    # DIAGNOSTIC 1: Environment Detection
+    # ========================================================================
+    print("📋 DIAGNOSTIC 1: Environment Detection")
+    print("-" * 40)
+    in_colab = 'google.colab' in sys.modules
+    print(f"   Running in Google Colab: {in_colab}")
+    print(f"   Python version: {sys.version}")
+    print(f"   Current working directory: {os.getcwd()}")
+    print()
+    
+    # ========================================================================
+    # DIAGNOSTIC 2: Gradio Version Check
+    # ========================================================================
+    print("📋 DIAGNOSTIC 2: Gradio Version Check")
+    print("-" * 40)
+    try:
+        print(f"   Gradio version: {gr.__version__}")
+        print(f"   Gradio location: {gr.__file__}")
+        print("   ✅ Gradio imported successfully")
+    except Exception as e:
+        print(f"   ❌ Error checking Gradio: {e}")
+    print()
+    
+    # ========================================================================
+    # DIAGNOSTIC 3: Network & Port Availability
+    # ========================================================================
+    print("📋 DIAGNOSTIC 3: Network & Port Availability")
+    print("-" * 40)
+    
+    def check_port(port):
+        """Check if a port is available."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            result = sock.connect_ex(('127.0.0.1', port))
+            sock.close()
+            return result != 0  # True if available (not in use)
+        except Exception as e:
+            print(f"   ⚠️ Error checking port {port}: {e}")
+            return False
+    
+    ports_to_check = [7860, 7861, 7862, 7863, 7864, 7865]
+    available_ports = []
+    for port in ports_to_check:
+        status = "✅ Available" if check_port(port) else "❌ In use"
+        print(f"   Port {port}: {status}")
+        if check_port(port):
+            available_ports.append(port)
+    
+    if not available_ports:
+        print("   ⚠️ WARNING: No default Gradio ports available!")
+        print("   💡 TIP: Try running: !kill -9 $(lsof -t -i:7860) in Colab")
+    print()
+    
+    # ========================================================================
+    # DIAGNOSTIC 4: Kill Existing Gradio Processes (Colab only)
+    # ========================================================================
+    if in_colab:
+        print("📋 DIAGNOSTIC 4: Killing Existing Gradio Processes")
+        print("-" * 40)
+        try:
+            import subprocess
+            for port in [7860, 7861, 7862]:
+                try:
+                    result = subprocess.run(
+                        f"kill -9 $(lsof -t -i:{port}) 2>/dev/null",
+                        shell=True, capture_output=True, text=True
+                    )
+                    if result.returncode == 0:
+                        print(f"   ✅ Killed process on port {port}")
+                except:
+                    pass
+            print("   ✅ Cleanup attempt completed")
+        except Exception as e:
+            print(f"   ⚠️ Could not kill existing processes: {e}")
+        print()
+    
+    # ========================================================================
+    # DIAGNOSTIC 5: Demo Object Verification
+    # ========================================================================
+    print("📋 DIAGNOSTIC 5: Demo Object Verification")
+    print("-" * 40)
+    try:
+        print(f"   Demo object type: {type(demo)}")
+        print(f"   Demo object exists: {demo is not None}")
+        if hasattr(demo, 'title'):
+            print(f"   Demo title: {demo.title}")
+        if hasattr(demo, 'blocks'):
+            print(f"   Demo has blocks: True")
+        print("   ✅ Demo object is valid")
+    except NameError:
+        print("   ❌ ERROR: 'demo' object is not defined!")
+        print("   💡 TIP: Make sure the Gradio Blocks code executed properly")
+    except Exception as e:
+        print(f"   ❌ Error verifying demo: {e}")
+        traceback.print_exc()
+    print()
+    
+    # ========================================================================
+    # DIAGNOSTIC 6: Directory Setup
+    # ========================================================================
+    print("📋 DIAGNOSTIC 6: Directory Setup")
+    print("-" * 40)
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
+        print(f"   Script directory (from __file__): {script_dir}")
     except NameError:
-        # In Colab or interactive environments, use current working directory
         script_dir = os.getcwd()
+        print(f"   Script directory (from cwd): {script_dir}")
     
     input_dir = os.path.join(script_dir, "input")
     output_dir = os.path.join(script_dir, "output")
-    os.makedirs(input_dir, exist_ok=True)
-    os.makedirs(output_dir, exist_ok=True)
-    print(f"📁 Created input folder: {input_dir}")
-    print(f"📁 Created output folder: {output_dir}")
-
-    #print("🚀 Launching Gradio interface for Google Colab (local access)...")
-        #demo.launch(share=False, debug=True, show_error=True)
     
-    # Check if running in Colab
-    in_colab = 'google.colab' in sys.modules
+    try:
+        os.makedirs(input_dir, exist_ok=True)
+        print(f"   ✅ Input folder ready: {input_dir}")
+    except Exception as e:
+        print(f"   ❌ Failed to create input folder: {e}")
     
-    if in_colab:
-        use_share = False  # Change to True if you prefer public URL
-        if use_share:
-            print("🚀 Launching Gradio interface for Google Colab (public URL)...")
-            #demo.launch(share=True, debug=False, show_error=True)
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"   ✅ Output folder ready: {output_dir}")
+    except Exception as e:
+        print(f"   ❌ Failed to create output folder: {e}")
+    print()
+    
+    # ========================================================================
+    # DIAGNOSTIC 7: Network Connectivity Test (Colab share)
+    # ========================================================================
+    print("📋 DIAGNOSTIC 7: Network Connectivity Test")
+    print("-" * 40)
+    try:
+        import urllib.request
+        test_urls = [
+            ("Google", "https://www.google.com"),
+            ("Gradio API", "https://api.gradio.app"),
+        ]
+        for name, url in test_urls:
+            try:
+                urllib.request.urlopen(url, timeout=5)
+                print(f"   ✅ {name}: Reachable")
+            except Exception as e:
+                print(f"   ❌ {name}: NOT reachable - {type(e).__name__}")
+    except Exception as e:
+        print(f"   ⚠️ Network test skipped: {e}")
+    print()
+    
+    # ========================================================================
+    # DIAGNOSTIC 8: Memory Check
+    # ========================================================================
+    print("📋 DIAGNOSTIC 8: System Resources")
+    print("-" * 40)
+    try:
+        import psutil
+        memory = psutil.virtual_memory()
+        print(f"   Total RAM: {memory.total / (1024**3):.1f} GB")
+        print(f"   Available RAM: {memory.available / (1024**3):.1f} GB")
+        print(f"   RAM Usage: {memory.percent}%")
+        if memory.percent > 90:
+            print("   ⚠️ WARNING: High memory usage may cause issues!")
+    except ImportError:
+        print("   ⚠️ psutil not available, skipping memory check")
+    except Exception as e:
+        print(f"   ⚠️ Could not check memory: {e}")
+    print()
+    
+    # ========================================================================
+    # LAUNCH GRADIO WITH DETAILED LOGGING
+    # ========================================================================
+    print("=" * 80)
+    print("🚀 LAUNCHING GRADIO")
+    print("=" * 80)
+    print()
+    
+    try:
+        if in_colab:
+            use_share = True  # Set to True to create public URL
+            
+            print(f"   Mode: Google Colab")
+            print(f"   Share mode: {use_share}")
+            print()
+            
+            if use_share:
+                print("   📡 Creating public share URL...")
+                print("   ⏳ This may take 10-30 seconds...")
+                print()
+                print("   🔧 Launch parameters:")
+                print("      - share=True")
+                print("      - debug=True")
+                print("      - show_error=True")
+                print()
+                
+                # Launch with maximum verbosity
+                result = demo.launch(
+                    share=True,
+                    debug=True,
+                    show_error=True,
+                    quiet=False
+                )
+                
+                print()
+                print("   📊 Launch result:")
+                print(f"      - Result type: {type(result)}")
+                if result:
+                    if hasattr(result, 'local_url'):
+                        print(f"      - Local URL: {result.local_url}")
+                    if hasattr(result, 'share_url'):
+                        print(f"      - Share URL: {result.share_url}")
+                        if result.share_url:
+                            print()
+                            print("   ✅ Share URL created successfully!")
+                            print(f"   🔗 Open this URL: {result.share_url}")
+                        else:
+                            print()
+                            print("   ❌ Share URL is None!")
+                            print("   💡 Possible causes:")
+                            print("      1. Firewall blocking gradio.live")
+                            print("      2. Network restrictions")
+                            print("      3. Gradio server issues")
+            else:
+                print("   📡 Creating local URL (Colab proxy)...")
+                print()
+                print("   🔧 Launch parameters:")
+                print("      - share=False")
+                print("      - server_name=0.0.0.0")
+                print("      - debug=True")
+                print("      - show_error=True")
+                print()
+                
+                result = demo.launch(
+                    share=False,
+                    server_name="0.0.0.0",
+                    debug=True,
+                    show_error=True,
+                    quiet=False
+                )
+                
+                print()
+                print("   📊 Launch result:")
+                print(f"      - Result type: {type(result)}")
+                if result and hasattr(result, 'local_url'):
+                    print(f"      - Local URL: {result.local_url}")
+                    print()
+                    print("   ⚠️ NOTE: In Colab, local URLs need proxy access")
+                    print("   💡 TIP: Use share=True for reliable access")
         else:
-            print("🚀 Launching Gradio interface for Google Colab (local access)...")
-            demo.launch(server_name="0.0.0.0", share=False, debug=False, show_error=True)
-    else:
-        # For local execution
-        print("🚀 Launching Gradio interface locally...")
-        print(f"💡 Input files will be saved to: {input_dir}")
-        print(f"💡 Output files will be saved to: {output_dir}")
-        demo.launch(server_name="127.0.0.1", share=False)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+            # Local execution
+            print("   Mode: Local")
+            print(f"   Input folder: {input_dir}")
+            print(f"   Output folder: {output_dir}")
+            print()
+            print("   🔧 Launch parameters:")
+            print("      - server_name=127.0.0.1")
+            print("      - share=False")
+            print("      - debug=True")
+            print()
+            
+            result = demo.launch(
+                server_name="127.0.0.1",
+                share=False,
+                debug=True,
+                show_error=True,
+                quiet=False
+            )
+            
+            print()
+            print("   📊 Launch result:")
+            if result and hasattr(result, 'local_url'):
+                print(f"      - Local URL: {result.local_url}")
+                print()
+                print("   ✅ Gradio launched successfully!")
+                print(f"   🔗 Open: http://127.0.0.1:7860")
+                
+    except Exception as e:
+        print()
+        print("=" * 80)
+        print("❌ LAUNCH FAILED!")
+        print("=" * 80)
+        print()
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error message: {str(e)}")
+        print()
+        print("Full traceback:")
+        print("-" * 40)
+        traceback.print_exc()
+        print("-" * 40)
+        print()
+        print("💡 Common solutions:")
+        print("   1. Restart Colab runtime: Runtime > Restart runtime")
+        print("   2. Kill existing processes: !kill -9 $(lsof -t -i:7860)")
+        print("   3. Upgrade Gradio: !pip install --upgrade gradio")
+        print("   4. Check internet connection")
+        print("   5. Try: demo.launch(share=True, debug=True)")
+        print()
+        
+    print()
+    print("=" * 80)
+    print("🔍 DIAGNOSTICS COMPLETE")
+    print(f"⏰ End time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 80)
