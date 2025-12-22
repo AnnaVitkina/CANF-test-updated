@@ -216,17 +216,18 @@ def enrich_etof_with_service(df_etofs, shipper_id, mismatch_report_paths):
     return df_etofs
 
 
-if __name__ == "__main__":
+#if __name__ == "__main__":
     # Configure enrichment ONCE at the start
     # All calls to process_etof_file will automatically use these settings
-    configure_enrichment(
-        shipper_id="apple",  # or "iffdgf"
-        mismatch_report_paths="mismatch_report_apple.xlsx"
+    #configure_enrichment(
+        #shipper_id="apple",  # or "iffdgf"
+        #mismatch_report_paths="mismatch_report_apple.xlsx"
         # Or multiple: ["Mismatch_Report_1.xlsx", "Mismatch_Report_2.xlsx"]
-    )
+    #)
     
     # Now all existing calls work with enrichment - NO CHANGES NEEDED
-    etof_dataframe, etof_column_names = process_etof_file('etofs_apple.xlsx')
+    #etof_dataframe, etof_column_names = process_etof_file('etofs_apple.xlsx')
     
-    save_dataframe_to_excel(etof_dataframe, "etof_processed_apple.xlsx")
-    print(etof_dataframe.head())
+   # save_dataframe_to_excel(etof_dataframe, "etof_processed_apple.xlsx")
+   # print(etof_dataframe.head())
+
