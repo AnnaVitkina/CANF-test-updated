@@ -47,7 +47,8 @@ def setup_python_path():
 setup_python_path()
 
 def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, order_files, shipper_id, 
-                             origin_header_row=None, origin_end_column=None, ignore_rate_card_columns=None):
+                             mismatch_report_files=None, origin_header_row=None, origin_end_column=None, 
+                             ignore_rate_card_columns=None):
     """
     Main workflow for use in Gradio, designed for Google Colab.
     Accepts uploaded files and user input; returns a downloadable file and status messages.
@@ -126,6 +127,7 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
     lc_path = _handle_upload(lc_file, allow_multiple=True)  # Allow multiple LC files
     origin_path = _handle_upload(origin_file)
     order_files_path = _handle_upload(order_files)
+    mismatch_report_path = _handle_upload(mismatch_report_files, allow_multiple=True)  # Allow multiple mismatch reports
 
     # Validate required fields: rate_card, etof, and shipper_id are required
     if not rate_card_path:
@@ -232,6 +234,29 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
         if not os.path.exists(input_order_files_path):
             log_status(f"⚠️ Warning: Failed to verify order files copy. Source: {order_files_path}, Destination: {input_order_files_path}", "warning")
 
+    # Handle mismatch report files (for ETOF enrichment)
+    mismatch_report_filenames = []
+    if mismatch_report_path:
+        # Handle both single file and list of files
+        mismatch_files_list = mismatch_report_path if isinstance(mismatch_report_path, list) else [mismatch_report_path]
+        
+        for idx, mismatch_file_path in enumerate(mismatch_files_list):
+            if mismatch_file_path:
+                # Preserve original filename for mismatch report files
+                mismatch_filename = os.path.basename(mismatch_file_path)
+                # If multiple files, ensure unique names
+                if len(mismatch_files_list) > 1:
+                    name, ext = os.path.splitext(mismatch_filename)
+                    mismatch_filename = f"{name}_{idx+1}{ext}" if mismatch_filename in mismatch_report_filenames else mismatch_filename
+                
+                input_mismatch_path = os.path.join(input_dir, mismatch_filename)
+                shutil.copy2(mismatch_file_path, input_mismatch_path)
+                mismatch_report_filenames.append(mismatch_filename)
+                if not os.path.exists(input_mismatch_path):
+                    log_status(f"⚠️ Warning: Failed to verify mismatch report copy. Source: {mismatch_file_path}, Destination: {input_mismatch_path}", "warning")
+        
+        log_status(f"✓ {len(mismatch_report_filenames)} Mismatch Report file(s) ready", "info")
+
     # Change to script directory so "input/" folder is relative to it
     original_cwd = os.getcwd()
     try:
@@ -239,7 +264,7 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
         
         # --- PART 1: ETOF Processing (Optionally run, but not mandatory in Colab GUI) ---
         try:
-            from part1_etof_file_processing import process_etof_file
+            from part1_etof_file_processing import process_etof_file, configure_enrichment
             if etof_filename:
                 # Verify file exists before processing
                 etof_full_path = os.path.join("input", etof_filename)
@@ -248,6 +273,12 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
                     log_status(f"Current directory: {os.getcwd()}", "info")
                     log_status(f"Input directory contents: {os.listdir('input') if os.path.exists('input') else 'input folder does not exist'}", "info")
                 else:
+                    # Configure enrichment if mismatch report files are provided
+                    if mismatch_report_filenames and shipper_id:
+                        mismatch_paths = mismatch_report_filenames if len(mismatch_report_filenames) > 1 else mismatch_report_filenames[0]
+                        configure_enrichment(shipper_id=shipper_id, mismatch_report_paths=mismatch_paths)
+                        log_status(f"✓ Enrichment configured for shipper '{shipper_id}' with {len(mismatch_report_filenames)} mismatch report(s)", "info")
+                    
                     log_status(f"📄 Processing ETOF file...", "info")
                     etof_df, etof_columns = process_etof_file(etof_filename)
                     log_status(f"✓ ETOF processed: {etof_df.shape[0]} rows, {etof_df.shape[1]} columns", "info")
@@ -657,6 +688,10 @@ with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
             - **Header Row**: Row number where column names are located (1-indexed, like Excel)
             - **End Column**: Last column to read (leave empty to read all columns)
         - **Order Files Export** (Optional): Excel/CSV file with order data
+        - **Mismatch Report File(s)** (Optional): Excel file(s) for ETOF enrichment
+          - For shipper "iffdgf": Adds SHIPMENT_ID column based on ETOF_NUMBER mapping
+          - For shipper "apple": Rewrites Service column based on SERVICE_ISD mapping
+          - You can upload multiple mismatch report files
         
         ### Step 3: Configure Advanced Options (Optional)
         - **Ignore Rate Card Columns**: Enter comma-separated column names to exclude from processing
@@ -704,6 +739,13 @@ with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
         origin_input = gr.File(label="Origin File (.xlsx, .csv, .edi) *Optional", file_types=[".xlsx", ".xls", ".csv", ".edi"])
         order_files_input = gr.File(label="Order Files Export (.xlsx) *Optional", file_types=[".xlsx", ".xls", ".csv"])
         shipper_id_input = gr.Textbox(label="Shipper ID *Required", placeholder="e.g. dairb or use Shipper short name as string")
+    
+    with gr.Row():
+        mismatch_report_input = gr.File(
+            label="Mismatch Report File(s) (.xlsx) *Optional - for ETOF enrichment",
+            file_types=[".xlsx", ".xls"],
+            file_count="multiple"
+        )
     
     def accumulate_lc_files(new_files, current_files):
         """Accumulate LC files - add new uploads to existing list. Only LC*.xml files are added."""
@@ -780,11 +822,12 @@ with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
     )
 
     def launch_workflow(rate_card_file, etof_file, lc_files_accumulated, origin_file, order_files, shipper_id,
-                       origin_header_row, origin_end_column, ignore_rate_card_columns):
+                       mismatch_report_files, origin_header_row, origin_end_column, ignore_rate_card_columns):
         try:
             lc_file = lc_files_accumulated if lc_files_accumulated else None
             result_file, status_text = run_full_workflow_gradio(
                 rate_card_file, etof_file, lc_file, origin_file, order_files, shipper_id,
+                mismatch_report_files=mismatch_report_files,
                 origin_header_row=origin_header_row,
                 origin_end_column=origin_end_column,
                 ignore_rate_card_columns=ignore_rate_card_columns
@@ -799,7 +842,7 @@ with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
         launch_workflow,
         inputs=[
             rate_card_input, etof_input, lc_files_state, origin_input, order_files_input, shipper_id_input,
-            origin_header_row_input, origin_end_column_input, ignore_rate_card_columns_input
+            mismatch_report_input, origin_header_row_input, origin_end_column_input, ignore_rate_card_columns_input
         ],
         outputs=[out, status_output]
     )
