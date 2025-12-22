@@ -1603,20 +1603,20 @@ def map_and_rename_columns(
 
 # Example usage
 #if __name__ == "__main__":
-    #try:
+#    try:
         # Main function: Map and rename columns
-        #etof_renamed, lc_renamed, origin_renamed = map_and_rename_columns(
-           # rate_card_file_path="rate_sie.xlsx",
-           # etof_file_path="etofs_sie.xlsx",
+       # etof_renamed, lc_renamed, origin_renamed = map_and_rename_columns(
+        #    rate_card_file_path="rate_dairb_2.xlsx",
+         #   etof_file_path="etofs_dairb_2.xlsx",
             #origin_file_path="file_dairb.xlsx",
             #origin_header_row=16,
             #origin_end_column=33,
             #order_files_path="Order_files_export.xls.xlsx",
             #lc_input_path="lc_dairb.xml",
-            #ignore_rate_card_columns=["Business Unit Name", "Remark"],
-            #shipper_id="sie"  # Custom logic: maps "SHAI Reference" to "SHIPMENT_ID" for dairb
-    #    )
-  #  except Exception:
+          #  ignore_rate_card_columns=["Lane ID"],
+           # shipper_id="dairb"  # Custom logic: maps "SHAI Reference" to "SHIPMENT_ID" for dairb
+     #   )
+    #except Exception:
     #    pass  
 
  
