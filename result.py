@@ -129,11 +129,7 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
     order_files_path = _handle_upload(order_files)
     mismatch_report_path = _handle_upload(mismatch_report_files, allow_multiple=True)  # Allow multiple mismatch reports
 
-    # Validate required fields: rate_card, etof, and shipper_id are required
-    if not rate_card_path:
-        error_msg = "❌ Error: Rate Card File is required."
-        log_status(error_msg, "error")
-        return None, error_msg
+    # Validate required fields: etof and shipper_id are required (rate_card is optional)
     if not etof_path:
         error_msg = "❌ Error: ETOF File is required."
         log_status(error_msg, "error")
@@ -767,7 +763,7 @@ with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
     lc_files_state = gr.State([])
     
     with gr.Row():
-        rate_card_input = gr.File(label="Rate Card File(s) (.xlsx) *Required - multiple allowed", file_types=[".xlsx", ".xls"], file_count="multiple")
+        rate_card_input = gr.File(label="Rate Card File(s) (.xlsx) - Optional", file_types=[".xlsx", ".xls"], file_count="multiple")
         etof_input = gr.File(label="ETOF File (.xlsx) *Required", file_types=[".xlsx", ".xls"])
         lc_input = gr.File(label="LC Files/Folder - drag folder or files (only LC*.xml used)", file_count="multiple")
     with gr.Row():
