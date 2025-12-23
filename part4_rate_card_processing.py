@@ -7,8 +7,11 @@ def process_rate_card(file_path):
     """
     Process a Rate Card Excel file from the input folder.
     
+    Handles both single file and list of files (for multiple rate cards).
+    
     Args:
-        file_path (str): Path to the file relative to the "input/" folder (e.g., "rate_card.xlsx")
+        file_path (str or list): Path to the file relative to the "input/" folder (e.g., "rate_card.xlsx"),
+                                  or list of file paths for multiple rate cards
     
     Returns:
         tuple: (dataframe, list of column names, conditions dictionary)
@@ -16,6 +19,16 @@ def process_rate_card(file_path):
             - list: List of column names in the processed dataframe
             - dict: Dictionary of conditions where keys are column names and values are condition text
     """
+    # Handle list of files - delegate to process_multiple_rate_cards
+    if isinstance(file_path, list):
+        if len(file_path) == 1:
+            file_path = file_path[0]  # Single file in list, process normally
+        else:
+            # Multiple files - use process_multiple_rate_cards
+            print(f"\n[INFO] Processing {len(file_path)} rate cards...")
+            combined_df, column_names, combined_conditions, _ = process_multiple_rate_cards(file_path)
+            return combined_df, column_names, combined_conditions
+    
     # Construct full path from input folder
     input_folder = "input"
     full_path = os.path.join(input_folder, file_path)
@@ -188,8 +201,11 @@ def process_business_rules(file_path):
     """
     Process the Business rules tab from a Rate Card Excel file.
     
+    Handles both single file and list of files (for multiple rate cards).
+    
     Args:
-        file_path (str): Path to the file relative to the "input/" folder
+        file_path (str or list): Path to the file relative to the "input/" folder,
+                                  or list of file paths for multiple rate cards
     
     Returns:
         dict: Dictionary containing:
@@ -199,6 +215,14 @@ def process_business_rules(file_path):
             - 'raw_rules': all parsed rules as a list of dicts
     """
     import re
+    
+    # Handle list of files - combine business rules from all files
+    if isinstance(file_path, list):
+        if len(file_path) == 1:
+            file_path = file_path[0]  # Single file in list, process normally
+        else:
+            # Multiple files - use combine_business_rules
+            return combine_business_rules(file_path)
     
     # Construct full path from input folder
     input_folder = "input"
@@ -1365,27 +1389,27 @@ process_rate_cards = process_rate_card_extended
     #MULTIPLE_FILES = ["rate_iff_2.xlsx", "rate_iff_1.xlsx"]
     
     #print("\n" + "="*60)
-    #print("TESTING: process_multiple_rate_cards")
-    #print("="*60)
-    #combined_df, columns, conditions, business_rules = process_multiple_rate_cards(MULTIPLE_FILES)
-    #print(f"\nCombined result: {len(combined_df)} rows, {len(columns)} columns")
-    #print(f"Sample of metadata columns:")
-    #print(combined_df[['Carrier agreement', 'Valid from', 'Valid to', 'Source file']].head())
+   # print("TESTING: process_multiple_rate_cards")
+   # print("="*60)
+  #  combined_df, columns, conditions, business_rules = process_multiple_rate_cards(MULTIPLE_FILES)
+  #  print(f"\nCombined result: {len(combined_df)} rows, {len(columns)} columns")
+   # print(f"Sample of metadata columns:")
+  #  print(combined_df[['Carrier agreement', 'Valid from', 'Valid to', 'Source file']].head())
     
     # Save combined rate cards to Excel
-    #combined_path = save_combined_rate_cards(MULTIPLE_FILES)
+   # combined_path = save_combined_rate_cards(MULTIPLE_FILES)
     #print(f"\nCombined file saved to: {combined_path}")
     
     # Load the combined file back
-    #df_loaded, cols_loaded, conds_loaded = process_rate_card_from_combined(combined_path)
-    #print(f"\nLoaded back: {len(df_loaded)} rows")
+   # df_loaded, cols_loaded, conds_loaded = process_rate_card_from_combined(combined_path)
+   # print(f"\nLoaded back: {len(df_loaded)} rows")
     
     # =========================================================================
     # Show DataFrame sample
     # =========================================================================
-    #print("\n" + "="*60)
-    #print("DATAFRAME SAMPLE")
-    #print("="*60)
-    #print(f"\nColumns: {columns}")
-    #print(f"\nFirst 5 rows:")
-    #print(combined_df.head())
+    print("\n" + "="*60)
+    print("DATAFRAME SAMPLE")
+    print("="*60)
+    print(f"\nColumns: {columns}")
+    print(f"\nFirst 5 rows:")
+    print(combined_df.head())
