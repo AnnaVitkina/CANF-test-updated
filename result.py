@@ -330,31 +330,31 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
         except Exception as e:
             log_status(f"⚠️ Origin processing failed: {str(e)}", "warning")
 
-        # --- PART 4: Rate Card Processing ---
+        # --- PART 4: Rate Card Processing (Optional) ---
         try:
-            from part4_rate_card_processing import process_rate_cards
-            if rate_card_filenames:
-                # Verify all files exist before processing
-                all_files_exist = True
-                for rc_filename in rate_card_filenames:
-                    rate_card_full_path = os.path.join("input", rc_filename)
-                    if not os.path.exists(rate_card_full_path):
-                        log_status(f"❌ Error: Rate card file not found at: {rate_card_full_path}", "error")
-                        all_files_exist = False
-                
-                if all_files_exist:
-                    log_status(f"📄 Processing {len(rate_card_filenames)} Rate Card file(s)...", "info")
-                    # Use process_rate_cards for single or multiple files
-                    rate_card_input = rate_card_filenames if len(rate_card_filenames) > 1 else rate_card_filenames[0]
-                    rate_card_df, rate_card_columns, rate_card_conditions = process_rate_cards(rate_card_input)
+            from part4_rate_card_processing import process_rate_card
+            
+            # Check for pre-combined rate_card_modified.xlsx first
+            modified_path = os.path.join("input", "rate_card_modified.xlsx")
+            
+            if os.path.exists(modified_path):
+                log_status(f"📄 Found pre-combined rate card: rate_card_modified.xlsx", "info")
+                rate_card_df, rate_card_columns, rate_card_conditions = process_rate_card("rate_card_modified.xlsx")
+                log_status(f"✓ Rate Card processed: {rate_card_df.shape[0]} rows, {len(rate_card_columns)} columns, {len(rate_card_conditions)} conditions", "info")
+            elif rate_card_filenames and len(rate_card_filenames) == 1:
+                # Single rate card file uploaded
+                rc_filename = rate_card_filenames[0]
+                rate_card_full_path = os.path.join("input", rc_filename)
+                if os.path.exists(rate_card_full_path):
+                    log_status(f"📄 Processing Rate Card: {rc_filename}", "info")
+                    rate_card_df, rate_card_columns, rate_card_conditions = process_rate_card(rc_filename)
                     log_status(f"✓ Rate Card processed: {rate_card_df.shape[0]} rows, {len(rate_card_columns)} columns, {len(rate_card_conditions)} conditions", "info")
                 else:
-                    log_status(f"Current directory: {os.getcwd()}", "info")
-                    log_status(f"Input directory contents: {os.listdir('input') if os.path.exists('input') else 'input folder does not exist'}", "info")
-        except ValueError as e:
-            # This catches the column mismatch error from process_rate_cards
-            log_status(f"❌ Rate card processing failed: {str(e)}", "error")
-            return None, f"Rate Card Error:\n{str(e)}"
+                    log_status(f"⚠️ Rate card file not found: {rate_card_full_path}", "warning")
+            elif rate_card_filenames and len(rate_card_filenames) > 1:
+                log_status(f"⚠️ Multiple rate cards uploaded. Please pre-combine them using multiple_rates.py first.", "warning")
+            else:
+                log_status(f"ℹ️ No rate card provided - skipping rate card processing", "info")
         except Exception as e:
             log_status(f"⚠️ Rate card processing failed: {str(e)}", "warning")
 
@@ -473,8 +473,12 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
             log_status(f"🔤 Processing Vocabulary Mapping...", "info")
             # Pass list of filenames if multiple, single filename if one, or None
             lc_input_param = lc_filenames if len(lc_filenames) > 1 else (lc_filenames[0] if lc_filenames else None)
-            # Pass all rate card files (list if multiple, single if one)
-            rate_card_for_vocab = rate_card_filenames if len(rate_card_filenames) > 1 else (rate_card_filenames[0] if rate_card_filenames else None)
+            # Use rate_card_modified.xlsx if exists, otherwise single uploaded file
+            modified_path = os.path.join("input", "rate_card_modified.xlsx")
+            if os.path.exists(modified_path):
+                rate_card_for_vocab = "rate_card_modified.xlsx"
+            else:
+                rate_card_for_vocab = rate_card_filenames[0] if rate_card_filenames else None
             vocab_result = map_and_rename_columns(
                 rate_card_file_path=rate_card_for_vocab,
                 etof_file_path=etof_filename,
@@ -520,8 +524,12 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
         from matching import run_matching
         # Change back to script directory for matching (it expects to be in script_dir)
         os.chdir(script_dir)
-        # Pass all rate card files (list if multiple, single if one)
-        rate_card_for_matching = rate_card_filenames if len(rate_card_filenames) > 1 else (rate_card_filenames[0] if rate_card_filenames else None)
+        # Use rate_card_modified.xlsx if exists, otherwise single uploaded file
+        modified_path = os.path.join("input", "rate_card_modified.xlsx")
+        if os.path.exists(modified_path):
+            rate_card_for_matching = "rate_card_modified.xlsx"
+        else:
+            rate_card_for_matching = rate_card_filenames[0] if rate_card_filenames else None
         log_status(f"🔍 Running Matching Process...", "info")
         matching_file = run_matching(rate_card_file_path=rate_card_for_matching)
         
