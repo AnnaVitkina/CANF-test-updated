@@ -842,42 +842,43 @@ def save_rate_card_output(file_path, output_path=None):
     return output_path
 
 
-if __name__ == "__main__":
+#if __name__ == "__main__":
     # Set the input file to process (change this to switch files)
-    INPUT_FILE = "rate_card_modified.xlsx"
+#    INPUT_FILE = "rate_card_modified.xlsx"
     
     # Process and save to Excel
-    output_file = save_rate_card_output(INPUT_FILE)
+#    output_file = save_rate_card_output(INPUT_FILE)
     
     # Also print to console
-    rate_card_dataframe, rate_card_column_names, rate_card_conditions = process_rate_card(INPUT_FILE)
-    print("\nDataFrame shape:", rate_card_dataframe.shape)
-    print("\nColumn names:")
-    print(rate_card_column_names)
-    print("\nConditions (cleaned):")
-    for col, condition in rate_card_conditions.items():
-        cleaned = clean_condition_text(condition)
-        print(f"  {col}: {cleaned[:100]}..." if len(cleaned) > 100 else f"  {col}: {cleaned}")
+#    rate_card_dataframe, rate_card_column_names, rate_card_conditions = process_rate_card(INPUT_FILE)
+#    print("\nDataFrame shape:", rate_card_dataframe.shape)
+#    print("\nColumn names:")
+#    print(rate_card_column_names)
+#    print("\nConditions (cleaned):")
+#    for col, condition in rate_card_conditions.items():
+#        cleaned = clean_condition_text(condition)
+#        print(f"  {col}: {cleaned[:100]}..." if len(cleaned) > 100 else f"  {col}: {cleaned}")
     
     # Print Business Rules
-    print("\n" + "="*60)
-    print("BUSINESS RULES")
-    print("="*60)
-    business_rules = process_business_rules(INPUT_FILE)
-    business_rules_conditions = transform_business_rules_to_conditions(business_rules)
+#    print("\n" + "="*60)
+#    print("BUSINESS RULES")
+#    print("="*60)
+#    business_rules = process_business_rules(INPUT_FILE)
+#    business_rules_conditions = transform_business_rules_to_conditions(business_rules)
     
-    print(f"\nParsed {len(business_rules_conditions)} business rules:")
-    for rule_name, condition in business_rules_conditions.items():
-        formatted = format_business_rule_condition(rule_name, condition)
-        print(f"  {rule_name}: {formatted}")
+#    print(f"\nParsed {len(business_rules_conditions)} business rules:")
+#    for rule_name, condition in business_rules_conditions.items():
+#        formatted = format_business_rule_condition(rule_name, condition)
+#        print(f"  {rule_name}: {formatted}")
     
     # Find and print which columns contain business rules
-    print("\n" + "="*60)
-    print("BUSINESS RULE COLUMNS IN RATE CARD")
-    print("="*60)
-    business_rule_columns = find_business_rule_columns(rate_card_dataframe, business_rules_conditions)
+#    print("\n" + "="*60)
+#    print("BUSINESS RULE COLUMNS IN RATE CARD")
+#    print("="*60)
+#    business_rule_columns = find_business_rule_columns(rate_card_dataframe, business_rules_conditions)
     
-    print(f"\nUnique columns containing business rule values:")
-    for col in sorted(business_rule_columns['unique_columns']):
-        rules_count = len(business_rule_columns['column_to_rules'].get(col, []))
-        print(f"  - {col}: {rules_count} rules")
+ #   print(f"\nUnique columns containing business rule values:")
+ #   for col in sorted(business_rule_columns['unique_columns']):
+  #      rules_count = len(business_rule_columns['column_to_rules'].get(col, []))
+   #     print(f"  - {col}: {rules_count} rules")
+
