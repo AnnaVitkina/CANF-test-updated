@@ -750,43 +750,642 @@ def save_rate_card_output(file_path, output_path=None):
     return output_path
 
 
-if __name__ == "__main__":
-    # Set the input file to process (change this to switch files)
-    INPUT_FILE = "rate_card.xlsx"
+def extract_general_info(file_path):
+    """
+    Extract metadata from the "General info" tab of a rate card.
     
-    # Process and save to Excel
-    output_file = save_rate_card_output(INPUT_FILE)
+    Args:
+        file_path (str): Path to the file relative to the "input/" folder
     
-    # Also print to console
-   # rate_card_dataframe, rate_card_column_names, rate_card_conditions = process_rate_card(INPUT_FILE)
-    #print("\nDataFrame shape:", rate_card_dataframe.shape)
-   #print("\nColumn names:")
-   # print(rate_card_column_names)
-   # print("\nConditions (cleaned):")
-   # for col, condition in rate_card_conditions.items():
-   #     cleaned = clean_condition_text(condition)
-   #     print(f"  {col}: {cleaned[:100]}..." if len(cleaned) > 100 else f"  {col}: {cleaned}")
+    Returns:
+        dict: Dictionary containing:
+            - 'carrier_agreement': Agreement number value
+            - 'valid_from': Start date of validity period
+            - 'valid_to': End date of validity period
+            - 'raw_validity_period': Original validity period string
+    """
+    import re
     
-    # Print Business Rules
-   # print("\n" + "="*60)
-   # print("BUSINESS RULES")
-   # print("="*60)
-   # business_rules = process_business_rules(INPUT_FILE)
-   # business_rules_conditions = transform_business_rules_to_conditions(business_rules)
+    # Construct full path from input folder
+    input_folder = "input"
+    full_path = os.path.join(input_folder, file_path)
     
-    #print(f"\nParsed {len(business_rules_conditions)} business rules:")
-    #for rule_name, condition in business_rules_conditions.items():
-    #    formatted = format_business_rule_condition(rule_name, condition)
-    #    print(f"  {rule_name}: {formatted}")
+    result = {
+        'carrier_agreement': None,
+        'valid_from': None,
+        'valid_to': None,
+        'raw_validity_period': None,
+        'source_file': file_path
+    }
     
-    # Find and print which columns contain business rules
-    #print("\n" + "="*60)
-    #print("BUSINESS RULE COLUMNS IN RATE CARD")
-    #print("="*60)
-   # business_rule_columns = find_business_rule_columns(rate_card_dataframe, business_rules_conditions)
+    try:
+        # Load the workbook
+        workbook = openpyxl.load_workbook(full_path, data_only=True)
+        
+        # Check if "General info" sheet exists
+        if "General info" not in workbook.sheetnames:
+            print(f"   [WARNING] 'General info' sheet not found in {file_path}")
+            return result
+        
+        sheet = workbook["General info"]
+        
+        # Search for "Agreement number" and "Validity period" in the first column
+        for row_idx in range(1, min(50, sheet.max_row + 1)):  # Search first 50 rows
+            cell_value = sheet.cell(row=row_idx, column=1).value
+            
+            if cell_value:
+                cell_str = str(cell_value).strip().lower()
+                
+                # Look for Agreement number
+                if 'agreement' in cell_str and 'number' in cell_str:
+                    agreement_value = sheet.cell(row=row_idx, column=2).value
+                    if agreement_value:
+                        result['carrier_agreement'] = str(agreement_value).strip()
+                        print(f"   [INFO] Found Agreement number: {result['carrier_agreement']}")
+                
+                # Look for Validity period
+                if 'validity' in cell_str and 'period' in cell_str:
+                    validity_value = sheet.cell(row=row_idx, column=2).value
+                    if validity_value:
+                        result['raw_validity_period'] = str(validity_value).strip()
+                        print(f"   [INFO] Found Validity period: {result['raw_validity_period']}")
+                        
+                        # Parse the validity period (format: "DD.MM.YYYY - DD.MM.YYYY")
+                        validity_str = str(validity_value).strip()
+                        
+                        # Try different separators: " - ", "-", " – ", "–"
+                        separators = [' - ', ' – ', ' — ', '-', '–', '—']
+                        dates = None
+                        
+                        for sep in separators:
+                            if sep in validity_str:
+                                parts = validity_str.split(sep)
+                                if len(parts) == 2:
+                                    dates = [parts[0].strip(), parts[1].strip()]
+                                    break
+                        
+                        if dates and len(dates) == 2:
+                            result['valid_from'] = dates[0]
+                            result['valid_to'] = dates[1]
+                            print(f"   [INFO] Parsed dates - Valid from: {result['valid_from']}, Valid to: {result['valid_to']}")
+                        else:
+                            print(f"   [WARNING] Could not parse validity period: {validity_str}")
+        
+        workbook.close()
+        
+    except Exception as e:
+        print(f"   [ERROR] Failed to extract general info from {file_path}: {str(e)}")
     
-   # print(f"\nUnique columns containing business rule values:")
-   # for col in sorted(business_rule_columns['unique_columns']):
-   #     rules_count = len(business_rule_columns['column_to_rules'].get(col, []))
-   #     print(f"  - {col}: {rules_count} rules")
+    return result
 
+
+def get_mandatory_columns(file_path):
+    """
+    Get the list of mandatory (black font) columns from a rate card.
+    
+    Args:
+        file_path (str): Path to the file relative to the "input/" folder
+    
+    Returns:
+        list: Sorted list of mandatory column names
+    """
+    _, column_names, _ = process_rate_card(file_path)
+    return sorted(column_names)
+
+
+def validate_mandatory_columns(file_paths):
+    """
+    Validate that all rate cards have the same mandatory columns.
+    
+    Args:
+        file_paths (list): List of file paths relative to the "input/" folder
+    
+    Returns:
+        tuple: (is_valid, reference_columns, differences)
+            - is_valid: True if all files have matching mandatory columns
+            - reference_columns: The mandatory columns from the first file
+            - differences: Dictionary of {file_path: {'missing': [...], 'extra': [...]}}
+    
+    Raises:
+        ValueError: If mandatory columns don't match across files
+    """
+    if not file_paths:
+        raise ValueError("No file paths provided")
+    
+    print(f"\n{'='*60}")
+    print(f"[VALIDATION] Checking mandatory columns across {len(file_paths)} rate cards")
+    print(f"{'='*60}")
+    
+    # Get columns from the first file as reference
+    reference_file = file_paths[0]
+    reference_columns = set(get_mandatory_columns(reference_file))
+    
+    print(f"   Reference file: {reference_file}")
+    print(f"   Reference columns ({len(reference_columns)}): {sorted(reference_columns)}")
+    
+    differences = {}
+    is_valid = True
+    
+    # Compare with other files
+    for file_path in file_paths[1:]:
+        current_columns = set(get_mandatory_columns(file_path))
+        
+        missing = reference_columns - current_columns
+        extra = current_columns - reference_columns
+        
+        if missing or extra:
+            is_valid = False
+            differences[file_path] = {
+                'missing': sorted(missing),
+                'extra': sorted(extra)
+            }
+            print(f"\n   [MISMATCH] {file_path}:")
+            if missing:
+                print(f"      Missing columns: {sorted(missing)}")
+            if extra:
+                print(f"      Extra columns: {sorted(extra)}")
+        else:
+            print(f"   [OK] {file_path}: Columns match")
+    
+    return is_valid, sorted(reference_columns), differences
+
+
+def combine_business_rules(file_paths):
+    """
+    Combine business rules from multiple rate card files.
+    
+    Args:
+        file_paths (list): List of file paths relative to the "input/" folder
+    
+    Returns:
+        dict: Combined business rules with source file tracking
+    """
+    print(f"\n{'='*60}")
+    print(f"[COMBINING] Business rules from {len(file_paths)} rate cards")
+    print(f"{'='*60}")
+    
+    combined_rules = {
+        'postal_code_zones': [],
+        'country_regions': [],
+        'no_data_added': [],
+        'raw_rules': [],
+        'source_files': {}
+    }
+    
+    for file_path in file_paths:
+        print(f"\n   Processing business rules from: {file_path}")
+        
+        rules = process_business_rules(file_path)
+        
+        # Track source file for each rule
+        for rule in rules.get('raw_rules', []):
+            rule['source_file'] = file_path
+            combined_rules['raw_rules'].append(rule)
+        
+        for zone in rules.get('postal_code_zones', []):
+            zone['source_file'] = file_path
+            combined_rules['postal_code_zones'].append(zone)
+        
+        for region in rules.get('country_regions', []):
+            region['source_file'] = file_path
+            combined_rules['country_regions'].append(region)
+        
+        for entry in rules.get('no_data_added', []):
+            entry['source_file'] = file_path
+            combined_rules['no_data_added'].append(entry)
+        
+        combined_rules['source_files'][file_path] = len(rules.get('raw_rules', []))
+    
+    print(f"\n   [SUMMARY] Combined business rules:")
+    print(f"      - Total postal code zones: {len(combined_rules['postal_code_zones'])}")
+    print(f"      - Total country regions: {len(combined_rules['country_regions'])}")
+    print(f"      - Total no data added: {len(combined_rules['no_data_added'])}")
+    print(f"      - Total raw rules: {len(combined_rules['raw_rules'])}")
+    
+    return combined_rules
+
+
+def combine_conditions(file_paths):
+    """
+    Combine conditions from multiple rate card files.
+    
+    Args:
+        file_paths (list): List of file paths relative to the "input/" folder
+    
+    Returns:
+        dict: Combined conditions dictionary with source tracking
+    """
+    print(f"\n{'='*60}")
+    print(f"[COMBINING] Conditions from {len(file_paths)} rate cards")
+    print(f"{'='*60}")
+    
+    combined_conditions = {}
+    
+    for file_path in file_paths:
+        print(f"\n   Processing conditions from: {file_path}")
+        
+        _, _, conditions = process_rate_card(file_path)
+        
+        for col_name, condition in conditions.items():
+            if col_name not in combined_conditions:
+                combined_conditions[col_name] = {
+                    'condition': condition,
+                    'source_files': [file_path]
+                }
+            else:
+                # If condition already exists, check if it's the same
+                existing_condition = combined_conditions[col_name]['condition']
+                if existing_condition != condition:
+                    print(f"      [WARNING] Different condition for '{col_name}' in {file_path}")
+                    # Keep both conditions by appending source
+                    combined_conditions[col_name]['source_files'].append(file_path)
+                    # Optionally merge conditions
+                    combined_conditions[col_name]['condition'] += f"\n[From {file_path}]: {condition}"
+                else:
+                    combined_conditions[col_name]['source_files'].append(file_path)
+        
+        print(f"      Found {len(conditions)} conditions")
+    
+    # Convert back to simple format for compatibility
+    simple_conditions = {col: data['condition'] for col, data in combined_conditions.items()}
+    
+    print(f"\n   [SUMMARY] Total unique conditions: {len(simple_conditions)}")
+    
+    return simple_conditions
+
+
+def process_multiple_rate_cards(file_paths, validate_columns=True):
+    """
+    Process multiple rate card files and combine them into a single dataset.
+    
+    This function:
+    1. Validates that mandatory columns match across all files (optional)
+    2. Reads all business rules and conditions and combines them
+    3. Processes each rate card and extracts data
+    4. Adds metadata from "General info" tab (Carrier agreement, Valid from, Valid to)
+    5. Combines all rate cards into one dataframe
+    
+    Args:
+        file_paths (list): List of file paths relative to the "input/" folder
+        validate_columns (bool): Whether to validate mandatory columns match (default: True)
+    
+    Returns:
+        tuple: (combined_dataframe, column_names, combined_conditions, combined_business_rules)
+            - combined_dataframe: Merged pandas DataFrame with all lanes and metadata columns
+            - column_names: List of column names in the combined dataframe
+            - combined_conditions: Dictionary of all conditions
+            - combined_business_rules: Dictionary of all business rules
+    
+    Raises:
+        ValueError: If mandatory columns don't match and validate_columns is True
+    """
+    if not file_paths:
+        raise ValueError("No file paths provided")
+    
+    if isinstance(file_paths, str):
+        file_paths = [file_paths]
+    
+    print(f"\n{'='*60}")
+    print(f"[PROCESSING] Multiple Rate Cards")
+    print(f"{'='*60}")
+    print(f"   Files to process: {len(file_paths)}")
+    for fp in file_paths:
+        print(f"      - {fp}")
+    
+    # Step 1: Validate mandatory columns if required
+    if validate_columns and len(file_paths) > 1:
+        is_valid, reference_columns, differences = validate_mandatory_columns(file_paths)
+        
+        if not is_valid:
+            error_msg = "Mandatory columns do not match across rate cards:\n"
+            for file_path, diff in differences.items():
+                error_msg += f"\n  {file_path}:"
+                if diff['missing']:
+                    error_msg += f"\n    Missing: {diff['missing']}"
+                if diff['extra']:
+                    error_msg += f"\n    Extra: {diff['extra']}"
+            raise ValueError(error_msg)
+        
+        print(f"\n   [OK] All rate cards have matching mandatory columns")
+    
+    # Step 2: Combine business rules from all files
+    combined_business_rules = combine_business_rules(file_paths)
+    
+    # Step 3: Combine conditions from all files
+    combined_conditions = combine_conditions(file_paths)
+    
+    # Step 4: Process each rate card and add metadata
+    print(f"\n{'='*60}")
+    print(f"[PROCESSING] Individual Rate Cards with Metadata")
+    print(f"{'='*60}")
+    
+    all_dataframes = []
+    
+    for file_path in file_paths:
+        print(f"\n   Processing: {file_path}")
+        
+        # Extract general info metadata
+        general_info = extract_general_info(file_path)
+        
+        # Process the rate card
+        df, columns, _ = process_rate_card(file_path)
+        
+        # Add metadata columns
+        df['Carrier agreement'] = general_info.get('carrier_agreement', '')
+        df['Valid from'] = general_info.get('valid_from', '')
+        df['Valid to'] = general_info.get('valid_to', '')
+        df['Source file'] = file_path
+        
+        print(f"      Rows: {len(df)}, Columns: {len(df.columns)}")
+        print(f"      Carrier agreement: {general_info.get('carrier_agreement', 'N/A')}")
+        print(f"      Valid from: {general_info.get('valid_from', 'N/A')}")
+        print(f"      Valid to: {general_info.get('valid_to', 'N/A')}")
+        
+        all_dataframes.append(df)
+    
+    # Step 5: Combine all dataframes
+    print(f"\n{'='*60}")
+    print(f"[COMBINING] All Rate Cards into One DataFrame")
+    print(f"{'='*60}")
+    
+    if len(all_dataframes) == 1:
+        combined_df = all_dataframes[0]
+    else:
+        combined_df = pd.concat(all_dataframes, ignore_index=True)
+    
+    # Get final column names
+    column_names = combined_df.columns.tolist()
+    
+    print(f"   Combined DataFrame:")
+    print(f"      - Total rows: {len(combined_df)}")
+    print(f"      - Total columns: {len(column_names)}")
+    print(f"      - Source files: {len(file_paths)}")
+    
+    # Show sample of data per source file
+    if 'Source file' in combined_df.columns:
+        print(f"\n   Rows per source file:")
+        for sf in combined_df['Source file'].unique():
+            count = len(combined_df[combined_df['Source file'] == sf])
+            print(f"      - {sf}: {count} rows")
+    
+    return combined_df, column_names, combined_conditions, combined_business_rules
+
+
+def save_combined_rate_cards(file_paths, output_path=None, validate_columns=True):
+    """
+    Process multiple rate cards, combine them, and save to Excel.
+    
+    This is a convenience function that wraps process_multiple_rate_cards
+    and saves the result to an Excel file.
+    
+    Args:
+        file_paths (list): List of file paths relative to the "input/" folder
+        output_path (str): Optional output path. If None, saves to partly_df folder
+        validate_columns (bool): Whether to validate mandatory columns match
+    
+    Returns:
+        str: Path to the saved combined Excel file
+    """
+    # Process all rate cards
+    combined_df, column_names, combined_conditions, combined_business_rules = \
+        process_multiple_rate_cards(file_paths, validate_columns)
+    
+    # Set output path
+    if output_path is None:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        partly_df_folder = os.path.join(script_dir, "partly_df")
+        if not os.path.exists(partly_df_folder):
+            os.makedirs(partly_df_folder)
+        output_path = os.path.join(partly_df_folder, "Combined_Rate_Cards.xlsx")
+    
+    # Transform business rules conditions for saving
+    business_rules_conditions = transform_business_rules_to_conditions(combined_business_rules)
+    
+    # Create conditions DataFrame
+    conditions_data = []
+    for col_name in column_names:
+        if col_name in ['Carrier agreement', 'Valid from', 'Valid to', 'Source file']:
+            continue  # Skip metadata columns
+        raw_condition = combined_conditions.get(col_name, "")
+        cleaned_condition = clean_condition_text(raw_condition) if raw_condition else ""
+        conditions_data.append({
+            'Column': col_name,
+            'Has Condition': 'Yes' if col_name in combined_conditions else 'No',
+            'Condition Rule': cleaned_condition
+        })
+    
+    df_conditions = pd.DataFrame(conditions_data)
+    
+    # Save to Excel
+    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+        # Sheet 1: Combined Rate Card Data
+        combined_df.to_excel(writer, sheet_name='Rate Card Data', index=False)
+        
+        # Sheet 2: Conditions
+        df_conditions.to_excel(writer, sheet_name='Conditions', index=False)
+        
+        # Sheet 3: Business Rules
+        business_rules_data = []
+        for rule_name, condition in business_rules_conditions.items():
+            business_rules_data.append({
+                'Rule Name': rule_name,
+                'Section': condition.get('section', '').replace('_', ' ').title(),
+                'Country': condition.get('country', ''),
+                'Postal Codes': condition.get('raw_postal_code', ''),
+                'Exclude': 'Yes' if condition.get('exclude') else 'No',
+                'Source File': condition.get('source_file', '')
+            })
+        
+        df_business_rules = pd.DataFrame(business_rules_data)
+        if not df_business_rules.empty:
+            df_business_rules.to_excel(writer, sheet_name='Business Rules', index=False)
+        
+        # Sheet 4: Summary
+        summary_data = {
+            'Metric': [
+                'Total Rows',
+                'Total Columns',
+                'Source Files',
+                'Columns with Conditions',
+                'Total Business Rules',
+                'Postal Code Zones',
+                'Country Regions'
+            ],
+            'Value': [
+                len(combined_df),
+                len(column_names),
+                ', '.join(file_paths),
+                len(combined_conditions),
+                len(combined_business_rules.get('raw_rules', [])),
+                len(combined_business_rules.get('postal_code_zones', [])),
+                len(combined_business_rules.get('country_regions', []))
+            ]
+        }
+        df_summary = pd.DataFrame(summary_data)
+        df_summary.to_excel(writer, sheet_name='Summary', index=False)
+    
+    print(f"\n✅ Combined Rate Cards saved to: {output_path}")
+    print(f"   - Sheet 'Rate Card Data': {len(combined_df)} rows x {len(column_names)} columns")
+    print(f"   - Sheet 'Conditions': {len(combined_conditions)} conditions")
+    print(f"   - Sheet 'Business Rules': {len(business_rules_conditions)} rules")
+    print(f"   - Sheet 'Summary': Overview statistics")
+    
+    return output_path
+
+
+def process_rate_card_from_combined(combined_file_path):
+    """
+    Process a previously combined rate card file.
+    
+    This function is designed to be compatible with process_rate_card output format,
+    allowing downstream code to work with combined rate cards seamlessly.
+    
+    Args:
+        combined_file_path (str): Path to the combined rate card Excel file
+    
+    Returns:
+        tuple: (dataframe, list of column names, conditions dictionary)
+            Same format as process_rate_card for compatibility
+    """
+    print(f"\n[INFO] Loading combined rate card from: {combined_file_path}")
+    
+    # Read the data sheet
+    df = pd.read_excel(combined_file_path, sheet_name='Rate Card Data')
+    
+    # Read conditions
+    try:
+        df_conditions = pd.read_excel(combined_file_path, sheet_name='Conditions')
+        conditions = {}
+        for _, row in df_conditions.iterrows():
+            if row.get('Has Condition') == 'Yes' and row.get('Condition Rule'):
+                conditions[row['Column']] = row['Condition Rule']
+    except Exception as e:
+        print(f"   [WARNING] Could not read conditions: {e}")
+        conditions = {}
+    
+    column_names = df.columns.tolist()
+    
+    print(f"   Loaded {len(df)} rows, {len(column_names)} columns, {len(conditions)} conditions")
+    
+    return df, column_names, conditions
+
+
+def process_rate_card_extended(file_paths, validate_columns=True):
+    """
+    Extended rate card processor that handles both single and multiple files.
+    
+    This function maintains backward compatibility with process_rate_card while
+    adding support for multiple rate cards. It can be used as a drop-in replacement
+    for process_rate_card in places that need multi-file support.
+    
+    Args:
+        file_paths (str or list): Single file path or list of file paths relative to "input/" folder
+        validate_columns (bool): Whether to validate mandatory columns match (for multiple files)
+    
+    Returns:
+        tuple: (dataframe, list of column names, conditions dictionary)
+            Same format as process_rate_card for full compatibility
+    
+    Usage:
+        # Single file (same as process_rate_card)
+        df, cols, conditions = process_rate_card_extended("rate_card.xlsx")
+        
+        # Multiple files (combined with metadata)
+        df, cols, conditions = process_rate_card_extended(["rate_card_1.xlsx", "rate_card_2.xlsx"])
+    """
+    # Handle single file - delegate to original process_rate_card
+    if isinstance(file_paths, str):
+        print(f"\n[INFO] Processing single rate card: {file_paths}")
+        return process_rate_card(file_paths)
+    
+    # Handle list with single file
+    if isinstance(file_paths, list) and len(file_paths) == 1:
+        print(f"\n[INFO] Processing single rate card: {file_paths[0]}")
+        return process_rate_card(file_paths[0])
+    
+    # Handle multiple files
+    print(f"\n[INFO] Processing {len(file_paths)} rate cards...")
+    combined_df, column_names, combined_conditions, _ = process_multiple_rate_cards(
+        file_paths, validate_columns
+    )
+    
+    return combined_df, column_names, combined_conditions
+
+
+# Global variable to store the combined rate card path (for use with process_rate_card wrapper)
+_COMBINED_RATE_CARD_PATH = None
+
+
+def set_combined_rate_card(file_paths, validate_columns=True):
+    """
+    Combine multiple rate cards and set up for use with process_rate_card.
+    
+    This function processes multiple rate cards, combines them, saves to a temporary
+    file, and sets up the environment so that subsequent calls to process_rate_card
+    (using special path "_combined_") will return the combined data.
+    
+    Args:
+        file_paths (list): List of file paths relative to the "input/" folder
+        validate_columns (bool): Whether to validate mandatory columns match
+    
+    Returns:
+        str: Path to the combined rate card file
+    
+    Usage:
+        # Set up combined rate cards
+        combined_path = set_combined_rate_card(["rc1.xlsx", "rc2.xlsx", "rc3.xlsx"])
+        
+        # Now use the combined path with existing code
+        df, cols, conditions = process_rate_card(combined_path)  # Not directly compatible
+        
+        # Or use the extended function
+        df, cols, conditions = process_rate_card_extended(["rc1.xlsx", "rc2.xlsx"])
+    """
+    global _COMBINED_RATE_CARD_PATH
+    
+    # Save combined rate cards
+    output_path = save_combined_rate_cards(file_paths, validate_columns=validate_columns)
+    _COMBINED_RATE_CARD_PATH = output_path
+    
+    print(f"\n[INFO] Combined rate card saved and set: {output_path}")
+    print(f"[INFO] Use process_rate_card_from_combined('{output_path}') to load the combined data")
+    
+    return output_path
+
+
+# Alias for backward compatibility - result.py uses this name
+process_rate_cards = process_rate_card_extended
+
+
+#if __name__ == "__main__":
+    # =========================================================================
+    # Multiple Rate Cards Processing
+    # =========================================================================
+    
+    #MULTIPLE_FILES = ["rate_iff_2.xlsx", "rate_iff_1.xlsx"]
+    
+    #print("\n" + "="*60)
+    #print("TESTING: process_multiple_rate_cards")
+    #print("="*60)
+    #combined_df, columns, conditions, business_rules = process_multiple_rate_cards(MULTIPLE_FILES)
+    #print(f"\nCombined result: {len(combined_df)} rows, {len(columns)} columns")
+    #print(f"Sample of metadata columns:")
+    #print(combined_df[['Carrier agreement', 'Valid from', 'Valid to', 'Source file']].head())
+    
+    # Save combined rate cards to Excel
+    #combined_path = save_combined_rate_cards(MULTIPLE_FILES)
+    #print(f"\nCombined file saved to: {combined_path}")
+    
+    # Load the combined file back
+    #df_loaded, cols_loaded, conds_loaded = process_rate_card_from_combined(combined_path)
+    #print(f"\nLoaded back: {len(df_loaded)} rows")
+    
+    # =========================================================================
+    # Show DataFrame sample
+    # =========================================================================
+    #print("\n" + "="*60)
+    #print("DATAFRAME SAMPLE")
+    #print("="*60)
+    #print(f"\nColumns: {columns}")
+    #print(f"\nFirst 5 rows:")
+    #print(combined_df.head())
