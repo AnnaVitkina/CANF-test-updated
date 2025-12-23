@@ -2170,7 +2170,7 @@ def run_matching(rate_card_file_path=None):
             return None
     
     try:
-        from part4_rate_card_processing import process_rate_card_extended as process_rate_card
+        from part4_rate_card_processing import process_rate_card
         
         df_rate_card, rate_card_columns, rate_card_conditions = process_rate_card(rate_card_file_path)
         
@@ -2606,3 +2606,4 @@ def run_matching(rate_card_file_path=None):
 
 if __name__ == "__main__":
     run_matching()
+
