@@ -15,7 +15,7 @@ from difflib import SequenceMatcher
 
 # Import processing functions
 from part4_rate_card_processing import (
-    process_rate_card_extended as process_rate_card, 
+    process_rate_card, 
     process_business_rules, 
     transform_business_rules_to_conditions, 
     find_business_rule_columns,
@@ -1620,6 +1620,7 @@ def map_and_rename_columns(
     #    pass  
 
  
+
 
 
 
