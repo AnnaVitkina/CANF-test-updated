@@ -122,7 +122,7 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
         return None if not allow_multiple else []
 
     # Convert all filepaths to correct types
-    rate_card_path = _handle_upload(rate_card_file)
+    rate_card_path = _handle_upload(rate_card_file, allow_multiple=True)  # Allow multiple rate cards
     etof_path = _handle_upload(etof_file)
     lc_path = _handle_upload(lc_file, allow_multiple=True)  # Allow multiple LC files
     origin_path = _handle_upload(origin_file)
@@ -162,22 +162,32 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
 
     # Copy uploaded files to input directory with standard names
     # This is necessary because processing functions expect files in "input/" folder
-    rate_card_filename = None
+    rate_card_filenames = []  # Changed to list for multiple rate cards
     etof_filename = None
     origin_filename = None
     order_files_filename = None
     
+    # Handle rate card files (can be single or multiple)
     if rate_card_path:
-        # Preserve original extension
-        rate_card_ext = os.path.splitext(rate_card_path)[1] or ".xlsx"
-        rate_card_filename = f"rate_card{rate_card_ext}"
-        input_rate_card_path = os.path.join(input_dir, rate_card_filename)
-        shutil.copy2(rate_card_path, input_rate_card_path)
-        log_status(f"✓ Copied rate card to: {input_rate_card_path}", "info")
-        if not os.path.exists(input_rate_card_path):
-            error_msg = f"❌ Error: Failed to copy rate card file. Source: {rate_card_path}, Destination: {input_rate_card_path}"
-            log_status(error_msg, "error")
-            return None, error_msg
+        # Handle both single file and list of files
+        rate_card_files_list = rate_card_path if isinstance(rate_card_path, list) else [rate_card_path]
+        
+        for idx, rc_file_path in enumerate(rate_card_files_list):
+            if rc_file_path:
+                # Preserve original filename for rate card files
+                rc_filename = os.path.basename(rc_file_path)
+                # If multiple files, ensure unique names
+                if len(rate_card_files_list) > 1:
+                    name, ext = os.path.splitext(rc_filename)
+                    rc_filename = f"{name}_{idx+1}{ext}" if rc_filename in rate_card_filenames else rc_filename
+                
+                input_rc_path = os.path.join(input_dir, rc_filename)
+                shutil.copy2(rc_file_path, input_rc_path)
+                rate_card_filenames.append(rc_filename)
+                if not os.path.exists(input_rc_path):
+                    log_status(f"⚠️ Warning: Failed to verify rate card copy. Source: {rc_file_path}, Destination: {input_rc_path}", "warning")
+        
+        log_status(f"✓ {len(rate_card_filenames)} Rate Card file(s) ready", "info")
     
     if etof_path:
         # Preserve original extension
@@ -322,18 +332,29 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
 
         # --- PART 4: Rate Card Processing ---
         try:
-            from part4_rate_card_processing import process_rate_card
-            if rate_card_filename:
-                # Verify file exists before processing
-                rate_card_full_path = os.path.join("input", rate_card_filename)
-                if not os.path.exists(rate_card_full_path):
-                    log_status(f"❌ Error: Rate card file not found at: {rate_card_full_path}", "error")
+            from part4_rate_card_processing import process_rate_cards
+            if rate_card_filenames:
+                # Verify all files exist before processing
+                all_files_exist = True
+                for rc_filename in rate_card_filenames:
+                    rate_card_full_path = os.path.join("input", rc_filename)
+                    if not os.path.exists(rate_card_full_path):
+                        log_status(f"❌ Error: Rate card file not found at: {rate_card_full_path}", "error")
+                        all_files_exist = False
+                
+                if all_files_exist:
+                    log_status(f"📄 Processing {len(rate_card_filenames)} Rate Card file(s)...", "info")
+                    # Use process_rate_cards for single or multiple files
+                    rate_card_input = rate_card_filenames if len(rate_card_filenames) > 1 else rate_card_filenames[0]
+                    rate_card_df, rate_card_columns, rate_card_conditions = process_rate_cards(rate_card_input)
+                    log_status(f"✓ Rate Card processed: {rate_card_df.shape[0]} rows, {len(rate_card_columns)} columns, {len(rate_card_conditions)} conditions", "info")
+                else:
                     log_status(f"Current directory: {os.getcwd()}", "info")
                     log_status(f"Input directory contents: {os.listdir('input') if os.path.exists('input') else 'input folder does not exist'}", "info")
-                else:
-                    log_status(f"📄 Processing Rate Card file...", "info")
-                    rate_card_df, rate_card_columns, rate_card_conditions = process_rate_card(rate_card_filename)
-                    log_status(f"✓ Rate Card processed: {rate_card_df.shape[0]} rows, {rate_card_df.shape[1]} columns, {len(rate_card_conditions)} conditions", "info")
+        except ValueError as e:
+            # This catches the column mismatch error from process_rate_cards
+            log_status(f"❌ Rate card processing failed: {str(e)}", "error")
+            return None, f"Rate Card Error:\n{str(e)}"
         except Exception as e:
             log_status(f"⚠️ Rate card processing failed: {str(e)}", "warning")
 
@@ -452,8 +473,10 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
             log_status(f"🔤 Processing Vocabulary Mapping...", "info")
             # Pass list of filenames if multiple, single filename if one, or None
             lc_input_param = lc_filenames if len(lc_filenames) > 1 else (lc_filenames[0] if lc_filenames else None)
+            # Pass all rate card files (list if multiple, single if one)
+            rate_card_for_vocab = rate_card_filenames if len(rate_card_filenames) > 1 else (rate_card_filenames[0] if rate_card_filenames else None)
             vocab_result = map_and_rename_columns(
-                rate_card_file_path=rate_card_filename,
+                rate_card_file_path=rate_card_for_vocab,
                 etof_file_path=etof_filename,
                 origin_file_path=origin_filename,
                 origin_header_row=header_row_int,
@@ -497,9 +520,10 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
         from matching import run_matching
         # Change back to script directory for matching (it expects to be in script_dir)
         os.chdir(script_dir)
-        # Pass the rate card filename to run_matching
+        # Pass all rate card files (list if multiple, single if one)
+        rate_card_for_matching = rate_card_filenames if len(rate_card_filenames) > 1 else (rate_card_filenames[0] if rate_card_filenames else None)
         log_status(f"🔍 Running Matching Process...", "info")
-        matching_file = run_matching(rate_card_file_path=rate_card_filename)
+        matching_file = run_matching(rate_card_file_path=rate_card_for_matching)
         
         # Convert to absolute path if it's a relative path
         if matching_file:
@@ -675,7 +699,10 @@ with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
         ## How to Use This Workflow
         
         ### Step 1: Upload Required Files
-        - **Rate Card File** (Required): Excel file containing rate card data (.xlsx)
+        - **Rate Card File(s)** (Required): Excel file(s) containing rate card data (.xlsx)
+          - You can upload multiple rate card files
+          - All rate cards must have the same mandatory columns (black font columns)
+          - If columns don't match, an error will be shown
         - **ETOF File** (Required): Excel file containing ETOF shipment data (.xlsx or)
         - **Shipper ID** (Required): Enter the shipper identifier (e.g., "dairb")
         
@@ -732,7 +759,7 @@ with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
     lc_files_state = gr.State([])
     
     with gr.Row():
-        rate_card_input = gr.File(label="Rate Card File (.xlsx) *Required", file_types=[".xlsx", ".xls"])
+        rate_card_input = gr.File(label="Rate Card File(s) (.xlsx) *Required - multiple allowed", file_types=[".xlsx", ".xls"], file_count="multiple")
         etof_input = gr.File(label="ETOF File (.xlsx) *Required", file_types=[".xlsx", ".xls"])
         lc_input = gr.File(label="LC Files/Folder - drag folder or files (only LC*.xml used)", file_count="multiple")
     with gr.Row():
