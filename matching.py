@@ -1283,9 +1283,22 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
     # Initialize a new 'comment' column in df_etofs
     #df_etofs['Comments'] = ''
     
+    # Check if "Carrier agreement" column exists in rate card
+    carrier_agreement_col = None
+    for col in df_filtered_rate_card.columns:
+        if col.lower().replace(' ', '').replace('_', '') == 'carrieragreement':
+            carrier_agreement_col = col
+            print(f"\n   [INFO] Found 'Carrier agreement' column in rate card: '{col}'")
+            break
+    
+    # Initialize "Rate Card" column in df_etofs if Carrier agreement exists
+    if carrier_agreement_col:
+        df_etofs['Rate Card'] = None
+    
     # Iterate through each row of df_etofs
     for index_etofs, row_etofs in df_etofs.iterrows():
         comments_for_current_etofs_row = []
+        carrier_agreement_value = None  # Track the best match's Carrier agreement
         
         # Initialize columns validated by business rules for this row
         # This will be populated by business rule validation before country validation
@@ -1584,6 +1597,14 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         # Track if we have too many matches (will be analyzed after discrepancies are collected)
         too_many_matches = len(best_matching_rate_card_rows) > 4
         
+        # Capture Carrier agreement value from the best match (first match)
+        if carrier_agreement_col and len(best_matching_rate_card_rows) > 0:
+            first_best_match = best_matching_rate_card_rows[0]['rate_card_row']
+            carrier_agreement_value = first_best_match.get(carrier_agreement_col)
+            if carrier_agreement_value:
+                df_etofs.loc[index_etofs, 'Rate Card'] = carrier_agreement_value
+                print(f"   [RATE CARD] Row {index_etofs}: Carrier agreement = '{carrier_agreement_value}'")
+        
         # Only proceed with date validation and discrepancy checking if we have matches
         if len(best_matching_rate_card_rows) == 0:
             # No matches found - add comment and skip to next row
@@ -1624,16 +1645,20 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         print(f"      - Valid to column: '{valid_to_col}'")
         
         # Check date validity for all best matches first (before discrepancy checking)
-        # If date is invalid for all matches, add comment and skip discrepancy checking
+        # FILTER OUT matches that are outside the validity date range
         if date_col and date_value and valid_from_col and valid_to_col:
-            date_invalid_count = 0
-            print(f"      - Checking {len(best_matching_rate_card_rows)} best matching rate card rows...")
+            valid_matches = []  # Only keep matches within validity range
+            invalid_matches = []  # Track removed matches for logging
+            print(f"      - Checking {len(best_matching_rate_card_rows)} best matching rate card rows for date validity...")
+            
             for match_idx, best_match_info in enumerate(best_matching_rate_card_rows):
                 rate_card_row_dict = best_match_info['rate_card_row']
                 valid_from = rate_card_row_dict.get(valid_from_col)
                 valid_to = rate_card_row_dict.get(valid_to_col)
                 
                 print(f"      - Match {match_idx + 1}: Valid from='{valid_from}' (type: {type(valid_from).__name__}), Valid to='{valid_to}' (type: {type(valid_to).__name__})")
+                
+                is_date_valid = True  # Assume valid unless proven otherwise
                 
                 if pd.notna(valid_from) and pd.notna(valid_to):
                     try:
@@ -1676,20 +1701,40 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                         
                         if pd.notna(date_dt) and pd.notna(valid_from_dt) and pd.notna(valid_to_dt):
                             if date_dt < valid_from_dt or date_dt > valid_to_dt:
-                                date_invalid_count += 1
-                                print(f"        Result: DATE INVALID (outside range)")
+                                is_date_valid = False
+                                print(f"        Result: DATE INVALID (outside range) - EXCLUDING this match")
                             else:
-                                print(f"        Result: Date is within valid range")
+                                print(f"        Result: Date is within valid range - KEEPING this match")
                         else:
-                            print(f"        Result: Could not parse one or more dates (NaT detected)")
+                            print(f"        Result: Could not parse one or more dates (NaT detected) - keeping match")
                     except Exception as e:
-                        print(f"        Result: EXCEPTION during date parsing: {e}")
+                        print(f"        Result: EXCEPTION during date parsing: {e} - keeping match")
                 else:
-                    print(f"        Result: Skipped (valid_from or valid_to is NaN)")
+                    print(f"        Result: Skipped (valid_from or valid_to is NaN) - keeping match")
+                
+                # Add to appropriate list
+                if is_date_valid:
+                    valid_matches.append(best_match_info)
+                else:
+                    invalid_matches.append(best_match_info)
             
-            # If date is invalid for all matches, add comment and skip discrepancy checking
-            print(f"      - Date invalid count: {date_invalid_count} / {len(best_matching_rate_card_rows)}")
-            if date_invalid_count == len(best_matching_rate_card_rows) and len(best_matching_rate_card_rows) > 0:
+            # Update best_matching_rate_card_rows to only include valid matches
+            original_count = len(best_matching_rate_card_rows)
+            best_matching_rate_card_rows = valid_matches
+            
+            print(f"      - Filtered: {len(valid_matches)} valid matches, {len(invalid_matches)} removed (outside date range)")
+            
+            # Update Carrier agreement value if first match changed
+            if carrier_agreement_col and len(best_matching_rate_card_rows) > 0:
+                first_best_match = best_matching_rate_card_rows[0]['rate_card_row']
+                new_carrier_agreement = first_best_match.get(carrier_agreement_col)
+                if new_carrier_agreement and new_carrier_agreement != carrier_agreement_value:
+                    carrier_agreement_value = new_carrier_agreement
+                    df_etofs.loc[index_etofs, 'Rate Card'] = carrier_agreement_value
+                    print(f"   [RATE CARD] Row {index_etofs}: Updated Carrier agreement = '{carrier_agreement_value}' (after date filtering)")
+            
+            # If ALL matches were filtered out (date invalid for all), add comment and skip
+            if len(best_matching_rate_card_rows) == 0 and original_count > 0:
                 print(f"      - All matches have invalid dates, skipping discrepancy checking")
                 comments_for_current_etofs_row.append(f"Date '{date_value}' is outside valid date range for all matching rate card entries")
                 comment_text = '\n'.join(comments_for_current_etofs_row)
@@ -2108,10 +2153,11 @@ def run_matching(rate_card_file_path=None):
     # Step 1: Get rate card from part4_rate_card_processing.py
     print("\n1. Getting Rate Card from part4_rate_card_processing.py...")
     
+    #rate_card_file_path = ["rate_iff_1.xlsx", "rate_iff_2.xlsx"]
     # If rate_card_file_path not provided, try to find it
     if rate_card_file_path is None:
         input_folder = "input"
-        possible_names = ["rate_dairb_2.xlsx", "rate_card.xls"]
+        possible_names = ["rate_card.xlsx", "rate_ahaha.xls"]
         for name in possible_names:
             full_path = os.path.join(input_folder, name)
             if os.path.exists(full_path):
@@ -2124,7 +2170,7 @@ def run_matching(rate_card_file_path=None):
             return None
     
     try:
-        from part4_rate_card_processing import process_rate_card
+        from part4_rate_card_processing import process_rate_card_extended as process_rate_card
         
         df_rate_card, rate_card_columns, rate_card_conditions = process_rate_card(rate_card_file_path)
         
