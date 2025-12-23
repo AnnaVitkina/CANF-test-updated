@@ -15,7 +15,7 @@ from difflib import SequenceMatcher
 
 # Import processing functions
 from part4_rate_card_processing import (
-    process_rate_card, 
+    process_rate_card_extended as process_rate_card,  # handles single AND multiple rate cards
     process_business_rules, 
     transform_business_rules_to_conditions, 
     find_business_rule_columns,
@@ -57,8 +57,19 @@ def calculate_string_similarity(str1, str2):
     return SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
 
 
+# Global variable for shipper-specific mappings
+CURRENT_SHIPPER_ID = None
+
+
+def set_current_shipper(shipper_id):
+    """Set the current shipper ID for custom mappings."""
+    global CURRENT_SHIPPER_ID
+    CURRENT_SHIPPER_ID = shipper_id
+
+
 def normalize_for_semantics(text):
     """Normalize text by replacing semantic equivalents."""
+    global CURRENT_SHIPPER_ID
     text = text.lower()
     text = text.replace('ship', 'origin')
     text = text.replace('cust', 'destination')
@@ -84,9 +95,10 @@ def normalize_for_semantics(text):
     text = text.replace('flow type', 'category')
     text = text.replace('flowtype', 'category')
     text = text.replace('flow_type', 'category')
-    # Port / Seaport mappings
-    text = text.replace('port of loading', 'origin airport')
-    text = text.replace('port of entry', 'destination airport')
+    # Port / Seaport mappings (Apple-specific: map port to airport)
+    if CURRENT_SHIPPER_ID and CURRENT_SHIPPER_ID.lower() == 'apple':
+        text = text.replace('port of loading', 'origin airport')
+        text = text.replace('port of entry', 'destination airport')
     return text
 
 
@@ -458,6 +470,9 @@ def create_vocabulary_dataframe(
             - 'Confidence': Confidence score (0-1)
         Mapping_Method values: 'custom', 'LLM', 'fuzzy', 'keyword_match'
     """
+    # Set global shipper ID for custom mappings
+    set_current_shipper(shipper_id)
+    
     print("\n" + "="*80)
     print("CREATING VOCABULARY DATAFRAME")
     print("="*80)
@@ -762,6 +777,9 @@ def map_and_rename_columns(
     Returns:
         Tuple: (etof_dataframe_renamed, lc_dataframe_renamed, origin_dataframe_renamed)
     """
+    # Set global shipper ID for custom mappings
+    set_current_shipper(shipper_id)
+    
     # Step 1: Get rate card columns
     try:
         print(f"\nStep 1: Processing rate card file: {rate_card_file_path}")
@@ -769,31 +787,58 @@ def map_and_rename_columns(
         # Check if file exists in input folder (process_rate_card expects files in "input" folder)
         import os
         input_folder = "input"
-        expected_path = os.path.join(input_folder, rate_card_file_path)
         
         # Check if input folder exists
         if not os.path.exists(input_folder):
             print(f"   WARNING: '{input_folder}' folder does not exist. Creating it...")
             os.makedirs(input_folder, exist_ok=True)
         
-        # Check if file exists in input folder
-        if not os.path.exists(expected_path):
-            # Try with just the filename
-            filename = os.path.basename(rate_card_file_path)
-            alt_path = os.path.join(input_folder, filename)
-            if os.path.exists(alt_path):
-                rate_card_file_path = filename
-                print(f"   Using file: {alt_path}")
-            else:
-                error_msg = f"Rate card file not found at: {expected_path}"
-                if os.path.exists(rate_card_file_path):
-                    error_msg += f"\n   Found file at current location: {rate_card_file_path}"
-                    error_msg += f"\n   Please move it to: {expected_path}"
-                else:
-                    error_msg += f"\n   Please ensure the file exists in the '{input_folder}' folder."
+        # Handle both single file and list of files
+        is_multiple_files = isinstance(rate_card_file_path, list)
+        files_to_check = rate_card_file_path if is_multiple_files else [rate_card_file_path]
+        validated_files = []
+        
+        for file_path in files_to_check:
+            # Try multiple locations in order:
+            # 1. Direct path (as provided)
+            # 2. In input folder
+            # 3. Just filename in input folder
+            
+            file_found = False
+            
+            # Option 1: Check direct path (full path or relative path as provided)
+            if os.path.exists(file_path):
+                validated_files.append(file_path)
+                print(f"   Found rate card at direct path: {file_path}")
+                file_found = True
+            
+            # Option 2: Check in input folder
+            if not file_found:
+                expected_path = os.path.join(input_folder, file_path)
+                if os.path.exists(expected_path):
+                    validated_files.append(file_path)
+                    print(f"   Found rate card in input folder: {expected_path}")
+                    file_found = True
+            
+            # Option 3: Try with just the filename in input folder
+            if not file_found:
+                filename = os.path.basename(file_path)
+                alt_path = os.path.join(input_folder, filename)
+                if os.path.exists(alt_path):
+                    validated_files.append(filename)
+                    print(f"   Found rate card (filename only): {alt_path}")
+                    file_found = True
+            
+            # If still not found, raise error
+            if not file_found:
+                error_msg = f"Rate card file not found. Tried:"
+                error_msg += f"\n   1. Direct path: {file_path}"
+                error_msg += f"\n   2. Input folder: {os.path.join(input_folder, file_path)}"
+                error_msg += f"\n   3. Filename in input: {os.path.join(input_folder, os.path.basename(file_path))}"
                 raise FileNotFoundError(error_msg)
-        else:
-            print(f"   Found rate card at: {expected_path}")
+        
+        # Use validated files (keep as list if originally a list, otherwise single file)
+        rate_card_file_path = validated_files if is_multiple_files else validated_files[0]
         
         rate_card_df, rate_card_columns_all, rate_card_conditions = process_rate_card(rate_card_file_path)
         print(f"   Successfully loaded rate card: {len(rate_card_columns_all)} columns")
@@ -801,6 +846,18 @@ def map_and_rename_columns(
         # Filter out ignored columns
         if ignore_rate_card_columns is None:
             ignore_rate_card_columns = []
+        else:
+            # Make a copy to avoid modifying the original list
+            ignore_rate_card_columns = list(ignore_rate_card_columns)
+        
+        # Auto-add metadata columns when multiple rate cards are provided
+        is_multiple_rate_cards = isinstance(rate_card_file_path, list) and len(rate_card_file_path) > 1
+        if is_multiple_rate_cards:
+            metadata_columns = ['Carrier agreement', 'Valid from', 'Valid to', 'Source file']
+            for col in metadata_columns:
+                if col not in ignore_rate_card_columns:
+                    ignore_rate_card_columns.append(col)
+            print(f"   [INFO] Multiple rate cards detected - auto-ignoring metadata columns: {metadata_columns}")
         
         # Remove ignored columns from rate card dataframe
         if ignore_rate_card_columns:
@@ -888,6 +945,15 @@ def map_and_rename_columns(
     if lc_input_path and etof_file_path:
         try:
             print(f"\nStep 2b: Processing LC file: {lc_input_path}")
+            print(f"   DEBUG: Current working directory: {os.getcwd()}")
+            print(f"   DEBUG: Looking for LC at: input/{lc_input_path}")
+            lc_full_path = os.path.join("input", lc_input_path)
+            print(f"   DEBUG: Full path exists? {os.path.exists(lc_full_path)}")
+            if os.path.exists(lc_full_path) and os.path.isdir(lc_full_path):
+                import glob
+                xml_files = glob.glob(os.path.join(lc_full_path, "*.xml"))
+                lc_xml_files = [f for f in xml_files if os.path.basename(f).upper().startswith('LC')]
+                print(f"   DEBUG: Found {len(xml_files)} XML files, {len(lc_xml_files)} LC XML files")
             # process_order_lc_etof_mapping now accepts optional order_files_path
             # If order_files_path is provided, uses order file mapping
             # If not provided, uses SHIPMENT_ID mapping
@@ -1603,21 +1669,21 @@ def map_and_rename_columns(
 
 # Example usage
 #if __name__ == "__main__":
-#    try:
+    #try:
         # Main function: Map and rename columns
-       # etof_renamed, lc_renamed, origin_renamed = map_and_rename_columns(
-        #    rate_card_file_path="rate_dairb_2.xlsx",
-         #   etof_file_path="etofs_dairb_2.xlsx",
+        #etof_renamed, lc_renamed, origin_renamed = map_and_rename_columns(
+           # rate_card_file_path=["rate_iff_1.xlsx", "rate_iff_2.xlsx"], 
+           # etof_file_path="etof_file_iff.xlsx",
             #origin_file_path="file_dairb.xlsx",
             #origin_header_row=16,
             #origin_end_column=33,
             #order_files_path="Order_files_export.xls.xlsx",
-            #lc_input_path="lc_dairb.xml",
-          #  ignore_rate_card_columns=["Lane ID"],
-           # shipper_id="dairb"  # Custom logic: maps "SHAI Reference" to "SHIPMENT_ID" for dairb
-     #   )
-    #except Exception:
-    #    pass  
+            #lc_input_path="input_iff",
+            #ignore_rate_card_columns=["Lane ID"],
+           # shipper_id="iffdgf"  # Custom logic: maps "SHAI Reference" to "SHIPMENT_ID" for dairb
+       # )
+   # except Exception:
+      #  pass  
 
  
 
