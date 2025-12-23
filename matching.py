@@ -1294,6 +1294,10 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         
         # ===== PRE-STEP: Quick Business Rules Validation to identify columns to skip =====
         # This runs BEFORE country validation so we know which country columns to skip
+        # Track which columns passed and which failed (only report failures if column has no passing rule)
+        business_rule_columns_passed = set()  # Columns where at least one rule passed
+        business_rule_columns_failed = {}  # Column -> list of failure messages (only used if no rule passes)
+        
         if business_rules_lookup and business_rules_lookup.get('business_rule_columns'):
             business_rule_cols = business_rules_lookup.get('business_rule_columns', set())
             
@@ -1320,12 +1324,57 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                     row_etofs, br_col_found if br_col_found else br_col, br_col_value, business_rules_lookup
                 )
                 
+                br_col_name = br_col_found if br_col_found else br_col
+                br_col_norm = normalize_column_name(br_col_name)
+                
                 if is_valid:
                     # Add validated columns to skip set (normalize for comparison)
                     for vc in validated_cols:
                         normalized_vc = normalize_column_name(vc)
                         columns_validated_by_business_rules.add(normalized_vc)
                     business_rule_validation_messages.append(f"[Business Rule Applied] {message}")
+                    business_rule_columns_passed.add(br_col_norm)
+                else:
+                    # Business rule validation FAILED - store for later (only report if no rule passes for this column)
+                    if br_col_norm not in business_rule_columns_failed:
+                        business_rule_columns_failed[br_col_norm] = []
+                    
+                    if failure_details:
+                        # Extract ALL failure details (both country mismatches and postal mismatches)
+                        failed_rules = failure_details.get('failed_rules', [])
+                        same_country_failures = failure_details.get('same_country_failures', [])
+                        actual_country = failure_details.get('actual_country', 'N/A')
+                        actual_postal = failure_details.get('actual_postal', 'N/A')
+                        is_country_region = failure_details.get('is_country_region', False)
+                        
+                        # First, check same_country_failures (most specific - country matched but postal didn't)
+                        if same_country_failures:
+                            for fail in same_country_failures:
+                                rule_name = fail.get('rule_name', 'Unknown')
+                                expected_postal = fail.get('expected_postal', [])
+                                failure_msg = f"Business rule '{rule_name}' failed: Postal code '{actual_postal}' does not start with any of {expected_postal}"
+                                if failure_msg not in business_rule_columns_failed[br_col_norm]:
+                                    business_rule_columns_failed[br_col_norm].append(failure_msg)
+                        elif failed_rules:
+                            # Check for country mismatches
+                            for fail in failed_rules:
+                                rule_name = fail.get('rule_name', 'Unknown')
+                                failure_type = fail.get('failure_type', 'unknown')
+                                expected_country = fail.get('expected_country', 'N/A')
+                                expected_postal = fail.get('expected_postal', [])
+                                
+                                if failure_type == 'country':
+                                    if is_country_region:
+                                        failure_msg = f"Business rule '{rule_name}' failed: Country '{actual_country}' does not match expected '{expected_country}'"
+                                    else:
+                                        failure_msg = f"Business rule '{rule_name}' failed: Country '{actual_country}' does not match expected '{expected_country}' (expected postal starting with {expected_postal})"
+                                elif failure_type == 'postal':
+                                    failure_msg = f"Business rule '{rule_name}' failed: Postal code '{actual_postal}' does not start with any of {expected_postal}"
+                                else:
+                                    failure_msg = f"Business rule '{rule_name}' validation failed for column '{br_col_name}'"
+                                
+                                if failure_msg not in business_rule_columns_failed[br_col_norm]:
+                                    business_rule_columns_failed[br_col_norm].append(failure_msg)
         
         if columns_validated_by_business_rules:
             print(f"\n   [PRE-STEP Row {index_etofs}] Business rules validated columns: {columns_validated_by_business_rules}")
@@ -1931,23 +1980,106 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                             comment = f" {disc['column']}: Shipment value '{disc['etofs_value']}' needs to be changed to '{target_value}'"
                         comments_for_current_etofs_row.append(comment)
         
-        # Check if we only have business rule messages (no actual discrepancies)
-        only_business_rule_messages = all(
-            msg.startswith('[Business Rule Applied]') 
-            for msg in comments_for_current_etofs_row
-        ) if comments_for_current_etofs_row else True
+        # ===== PASS 1: Add business rule failure messages for sides that have NO passing rule =====
+        # First, determine which sides have passing rules
+        origin_side_passed = any('origin' in col for col in business_rule_columns_passed)
+        destination_side_passed = any('destination' in col for col in business_rule_columns_passed)
         
-        if only_business_rule_messages:
-            # Add "No discrepancies found" since there are no actual discrepancies
-            comments_for_current_etofs_row.append("No discrepancies found")
+        # Track which failure messages belong to which side AND their rule type
+        # Rule types: "country_region" (only country matters) vs "postal_code_zone" (country + postal matter)
+        origin_failure_messages = []  # list of (message, rule_type)
+        destination_failure_messages = []  # list of (message, rule_type)
+        
+        if business_rule_columns_failed:
+            for br_col_norm, failure_msgs in business_rule_columns_failed.items():
+                # Only add failure messages for columns that have NO passing rule
+                if br_col_norm not in business_rule_columns_passed:
+                    is_origin_rule = 'origin' in br_col_norm
+                    is_destination_rule = 'destination' in br_col_norm
+                    
+                    # Determine rule type from column name
+                    # "Country Region" rules only check country
+                    # "Postal Code Zone" rules check country + postal
+                    is_country_region_rule = 'countryregion' in br_col_norm or 'country region' in br_col_norm.replace('_', ' ')
+                    is_postal_zone_rule = 'postalcode' in br_col_norm or 'postal' in br_col_norm
+                    rule_type = 'country_region' if is_country_region_rule else 'postal_code_zone' if is_postal_zone_rule else 'unknown'
+                    
+                    # Skip if a rule on the same side already passed
+                    if is_origin_rule and origin_side_passed:
+                        continue
+                    if is_destination_rule and destination_side_passed:
+                        continue
+                    
+                    for failure_msg in failure_msgs:
+                        full_msg = f"[Business Rule Failed] {failure_msg}"
+                        comments_for_current_etofs_row.append(full_msg)
+                        # Track which side and rule type this message belongs to
+                        if is_origin_rule:
+                            origin_failure_messages.append((full_msg, rule_type))
+                        elif is_destination_rule:
+                            destination_failure_messages.append((full_msg, rule_type))
+        
+        # ===== PASS 2: Remove ONLY "Country Region" rule failures when no country discrepancy =====
+        # Rule types:
+        # - "Country Region" rules (EXPORT_S, IMPORT_S): Only check country
+        #   → Remove if no country discrepancy (direct values match like ES = ES)
+        # - "Postal Code Zone" rules (DE Zone 26): Check country + postal
+        #   → ALWAYS keep (both country and postal failures are relevant)
+        if origin_failure_messages or destination_failure_messages:
+            # Check for actual COUNTRY discrepancies (non-business-rule comments) per side
+            has_origin_country_discrepancy = False
+            has_destination_country_discrepancy = False
+            
+            for comment in comments_for_current_etofs_row:
+                comment_lower = comment.lower()
+                # Skip business rule messages
+                if comment_lower.startswith('[business rule'):
+                    continue
+                # Check for origin-related discrepancy (country, postal, zone, region)
+                if ('origin country' in comment_lower or 
+                    'origincountry' in comment_lower or
+                    'origin postal' in comment_lower or
+                    ('origin' in comment_lower and ('zone' in comment_lower or 'region' in comment_lower))):
+                    has_origin_country_discrepancy = True
+                # Check for destination-related discrepancy
+                if ('destination country' in comment_lower or 
+                    'destinationcountry' in comment_lower or
+                    'destination postal' in comment_lower or
+                    ('destination' in comment_lower and ('zone' in comment_lower or 'region' in comment_lower))):
+                    has_destination_country_discrepancy = True
+            
+            # Determine which failure messages to remove
+            # Only remove "Country Region" rule failures when no country discrepancy
+            # ALWAYS keep "Postal Code Zone" rule failures
+            messages_to_remove = set()
+            
+            if not has_origin_country_discrepancy and origin_failure_messages:
+                for msg, rule_type in origin_failure_messages:
+                    # Only remove "Country Region" rule failures
+                    # Keep "Postal Code Zone" failures - they're always relevant
+                    if rule_type == 'country_region':
+                        print(f"   [FILTER] Removing origin Country Region failure (no origin geo discrepancy)")
+                        messages_to_remove.add(msg)
+                    # Keep postal_code_zone and unknown rule types
+            
+            if not has_destination_country_discrepancy and destination_failure_messages:
+                for msg, rule_type in destination_failure_messages:
+                    # Only remove "Country Region" rule failures
+                    if rule_type == 'country_region':
+                        print(f"   [FILTER] Removing destination Country Region failure (no destination geo discrepancy)")
+                        messages_to_remove.add(msg)
+                    # Keep postal_code_zone and unknown rule types
+            
+            # Filter out the irrelevant messages
+            if messages_to_remove:
+                comments_for_current_etofs_row = [
+                    c for c in comments_for_current_etofs_row if c not in messages_to_remove
+                ]
         
         if comments_for_current_etofs_row:
             comment_text = '\n'.join(comments_for_current_etofs_row)
             df_etofs.loc[index_etofs, 'comment'] = comment_text
-            if only_business_rule_messages:
-                print(f"   [COMMENT] Row {index_etofs}: No discrepancies (business rules applied)")
-            else:
-                print(f"   [COMMENT] Row {index_etofs}: Discrepancies found ({len(comments_for_current_etofs_row)} items)")
+            print(f"   [COMMENT] Row {index_etofs}: {len(comments_for_current_etofs_row)} items")
             print(f"   [COMMENT]   -> '{comment_text[:100]}{'...' if len(comment_text) > 100 else ''}'")
         else:
             df_etofs.loc[index_etofs, 'comment'] = 'No discrepancies found'
@@ -2428,5 +2560,3 @@ def run_matching(rate_card_file_path=None):
 
 if __name__ == "__main__":
     run_matching()
-
-
