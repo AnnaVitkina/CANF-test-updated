@@ -769,7 +769,11 @@ def map_and_rename_columns(
         # Check if file exists in input folder (process_rate_card expects files in "input" folder)
         import os
         input_folder = "input"
-        expected_path = os.path.join(input_folder, rate_card_file_path)
+
+        # Line 772 - add this check:
+        if not isinstance(rate_card_file_path, list):
+            expected_path = os.path.join(input_folder, rate_card_file_path)
+        #expected_path = os.path.join(input_folder, rate_card_file_path)
         
         # Check if input folder exists
         if not os.path.exists(input_folder):
@@ -1620,6 +1624,7 @@ def map_and_rename_columns(
     #    pass  
 
  
+
 
 
 
