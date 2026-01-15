@@ -366,6 +366,13 @@ CUSTOM_LOGIC_MAPPINGS = {
     (None, 'dairb', None): {
         'SERVICE': 'Service'
     },
+    (None, 'iffdgf', None): {
+        'CONT_LOAD': 'Container Type',
+    },
+    (None, 'apple', None): {
+        'Carrier': 'Carrier Name',
+        'Original service': 'Lane Type'
+    },
     # Example custom mappings - add your specific mappings here
     # ('CARRIER1', 'SHIPPER1', 'AIR', 'JFK'): {
     #     'Origin airport': 'Origin Airport Code',
@@ -1623,6 +1630,7 @@ def map_and_rename_columns(
      #   pass  
 
  
+
 
 
 
