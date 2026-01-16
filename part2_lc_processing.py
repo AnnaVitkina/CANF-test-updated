@@ -42,7 +42,7 @@ def find_lc_xml_files(folder_path: str, recursive: bool = False) -> List[str]:
         filename = xml_file.name
         
         # Check if filename starts with 'LC' (case-insensitive)
-        if filename.upper().startswith('LC'):
+        if filename.upper().startswith('LC', 'ISD'):
             lc_xml_files.append(str(xml_file.resolve()))
     
     return sorted(lc_xml_files)
@@ -206,4 +206,5 @@ def save_dataframe_to_excel(df, output_filename, folder_name="partly_df"):
 #    folder_path = "LC_Bollore ES (EUR)_ADSESPR03Bollore_ADS_Airfreight_ES_202509_CDP_I250014731_.xml"
 #    lc_dataframe, lc_column_names = process_lc_input(folder_path)
 #    save_dataframe_to_excel(lc_dataframe, "lc_processed_dairb.xlsx")
+
 
