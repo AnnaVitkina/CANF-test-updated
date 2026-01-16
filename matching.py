@@ -12,6 +12,7 @@ This script:
 import pandas as pd
 import os
 import re
+import sys
 
 # Import business rules functions
 from part4_rate_card_processing import (
@@ -323,10 +324,11 @@ def validate_business_rule(etof_row, business_rule_col, rule_value, business_rul
         business_rules_lookup: Business rules lookup dictionary
     
     Returns:
-        tuple: (is_valid, validated_columns, message)
+        tuple: (is_valid, validated_columns, message, failure_details)
             - is_valid: True if rule is correctly applied
             - validated_columns: List of columns that were validated by this rule
             - message: Explanation message
+            - failure_details: Dictionary with details about validation failure (empty if valid)
     """
     print(f"\n   {'='*60}")
     print(f"   [BUSINESS RULE VALIDATION] Starting validation...")
@@ -380,7 +382,7 @@ def validate_business_rule(etof_row, business_rule_col, rule_value, business_rul
     
     if not rule_name:
         print(f"   [DEBUG] NO RULE FOUND for value '{rule_value_str}'")
-        return False, [], f"No business rule found for '{rule_value_str}'"
+        return False, [], f"No business rule found for '{rule_value_str}'", {}
     
     # Get expected country and postal codes from the rule
     expected_country = rule_to_country.get(rule_name)
@@ -1085,7 +1087,7 @@ def analyze_discrepancy_patterns(all_discrepancies, conditions_dict=None):
     return False, "Please recheck the shipment details", []
 
 
-def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_columns, conditions_dict=None, debug_conditions=True, rate_card_file_path=None, business_rules_lookup=None):
+def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_columns, conditions_dict=None, debug_conditions=True, rate_card_file_path=None, business_rules_lookup=None, debug_log_file="matching_debug.txt"):
     """Match ResMed shipments with Rate Card entries and identify discrepancies.
     
     Args:
@@ -1096,8 +1098,49 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         debug_conditions: Enable debug output for condition checking (default: True)
         rate_card_file_path: Path to rate card file for loading business rules
         business_rules_lookup: Pre-loaded business rules lookup (optional, will load if not provided)
+        debug_log_file: Path to save debug output (default: "matching_debug.txt")
     """
-    print(f"\n[DEBUG] match_shipments_with_rate_card called with debug_conditions={debug_conditions}")
+    # Create a class to redirect print output to both console and file
+    class TeeOutput:
+        """Writes to both stdout and a file simultaneously."""
+        def __init__(self, file_handle, original_stdout):
+            self.file = file_handle
+            self.stdout = original_stdout
+        
+        def write(self, message):
+            self.stdout.write(message)
+            if self.file:
+                try:
+                    self.file.write(message)
+                    self.file.flush()  # Ensure immediate write
+                except:
+                    pass
+        
+        def flush(self):
+            self.stdout.flush()
+            if self.file:
+                try:
+                    self.file.flush()
+                except:
+                    pass
+    
+    # Open debug log file and redirect stdout
+    debug_file = None
+    original_stdout = sys.stdout
+    try:
+        debug_file = open(debug_log_file, 'w', encoding='utf-8')
+        debug_file.write(f"=== MATCHING DEBUG LOG ===\n")
+        debug_file.write(f"Generated at: {pd.Timestamp.now()}\n\n")
+        # Redirect all print statements to both console and file
+        sys.stdout = TeeOutput(debug_file, original_stdout)
+    except Exception as e:
+        print(f"[WARNING] Could not open debug log file: {e}")
+    
+    def debug_log(message):
+        """Write to both console and debug file (for backwards compatibility)."""
+        print(message)
+    
+    debug_log(f"\n[DEBUG] match_shipments_with_rate_card called with debug_conditions={debug_conditions}")
     print(f"[DEBUG] rate_card_file_path parameter: {rate_card_file_path}")
     print(f"[DEBUG] business_rules_lookup parameter is None: {business_rules_lookup is None}")
     
@@ -1226,7 +1269,6 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         origin_conditions = conditions_dict[rc_origin_col]
         print(f"   [DEBUG] Origin Country conditions found: {origin_conditions[:100]}...")
         # Parse conditions like "Singapore: equals SG" or "1. Singapore: equals SG,SGP"
-        import re
         for line in str(origin_conditions).split('\n'):
             line = line.strip()
             if ':' in line and ('equals' in line.lower() or 'equal to' in line.lower()):
@@ -1244,7 +1286,6 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
     if rc_dest_col and rc_dest_col in conditions_dict:
         dest_conditions = conditions_dict[rc_dest_col]
         print(f"   [DEBUG] Destination Country conditions found: {dest_conditions[:100]}...")
-        import re
         for line in str(dest_conditions).split('\n'):
             line = line.strip()
             if ':' in line and ('equals' in line.lower() or 'equal to' in line.lower()):
@@ -1571,28 +1612,152 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                 if i < len(common_rate_card_cols_original) and common_rate_card_cols_original[i] in row_rate_card
             }
             
-            # Compare normalized values
-            for col_norm in common_columns_normalized:
+            # Compare normalized values with comprehensive matching logic
+            lane_num = row_rate_card.get('Lane #', row_rate_card.get('Lane#', index_rate_card))
+            print(f"\n      [SCORING] Lane {lane_num} (index {index_rate_card}):")
+            
+            for i, col_norm in enumerate(common_columns_normalized):
                 if col_norm in etofs_normalized_values and col_norm in rate_card_normalized_values:
                     etofs_val = etofs_normalized_values[col_norm]
                     rc_val = rate_card_normalized_values[col_norm]
                     
-                    # Special handling for postal code columns - "starts with" matching
-                    is_postal_code_column = 'post' in col_norm.lower() or 'ship_post' in col_norm.lower() or 'cust_post' in col_norm.lower()
+                    # Get original column names for condition lookup
+                    rate_card_original_col = common_rate_card_cols_original[i] if i < len(common_rate_card_cols_original) else None
+                    etofs_original_col = common_etofs_cols_original[i] if i < len(common_etofs_cols_original) else None
                     
+                    # Get raw (non-normalized) values for business rule and condition checking
+                    rc_val_raw = row_rate_card.get(rate_card_original_col) if rate_card_original_col else None
+                    etofs_val_raw = row_etofs.get(etofs_original_col) if etofs_original_col else None
+                    
+                    # 1. WILDCARD: If rate card value is empty/None → +1 match
+                    if rc_val is None:
+                        current_matches += 1
+                        print(f"         {rate_card_original_col}: EMPTY (wildcard) → +1 ✓")
+                        continue
+                    
+                    # 2. Check if this is a BUSINESS RULE column (rate card value is a business rule name)
+                    is_business_rule_match = False
+                    if business_rules_lookup:
+                        rule_to_country = business_rules_lookup.get('rule_to_country', {})
+                        rule_to_postal = business_rules_lookup.get('rule_to_postal_codes', {})
+                        
+                        # Check if rc_val_raw matches a business rule name (case-insensitive)
+                        rc_val_str = str(rc_val_raw).strip() if rc_val_raw else ''
+                        matched_rule = None
+                        for rule_name in rule_to_country.keys():
+                            if str(rule_name).lower() == rc_val_str.lower():
+                                matched_rule = rule_name
+                                break
+                        
+                        if matched_rule:
+                            # This is a business rule - validate it
+                            expected_country = rule_to_country.get(matched_rule)
+                            expected_postal_codes = rule_to_postal.get(matched_rule, [])
+                            
+                            # Determine if this is origin or destination based on column name
+                            col_lower = col_norm.lower()
+                            is_origin = 'origin' in col_lower or 'ship' in col_lower
+                            is_destination = 'destination' in col_lower or 'cust' in col_lower
+                            
+                            # Get actual country and postal from ETOF
+                            actual_country = None
+                            actual_postal = None
+                            
+                            if is_origin:
+                                for c in row_etofs.index:
+                                    c_norm = normalize_column_name(c)
+                                    if 'origin' in c_norm and 'country' in c_norm:
+                                        actual_country = row_etofs.get(c)
+                                    elif ('origin' in c_norm or 'ship' in c_norm) and 'post' in c_norm:
+                                        actual_postal = row_etofs.get(c)
+                            elif is_destination:
+                                for c in row_etofs.index:
+                                    c_norm = normalize_column_name(c)
+                                    if 'destination' in c_norm and 'country' in c_norm:
+                                        actual_country = row_etofs.get(c)
+                                    elif ('destination' in c_norm or 'cust' in c_norm) and 'post' in c_norm:
+                                        actual_postal = row_etofs.get(c)
+                            
+                            # Validate country
+                            country_valid = False
+                            if expected_country and actual_country:
+                                actual_country_norm = str(actual_country).strip().upper()
+                                expected_countries = [c.strip().upper() for c in str(expected_country).split(',')]
+                                country_valid = actual_country_norm in expected_countries
+                            
+                            # Validate postal code (if expected)
+                            postal_valid = True  # Default to True if no postal codes expected
+                            if expected_postal_codes and actual_postal:
+                                actual_postal_norm = str(actual_postal).strip().lower()
+                                postal_valid = any(
+                                    actual_postal_norm.startswith(str(pc).strip().lower()) 
+                                    for pc in expected_postal_codes
+                                )
+                            elif expected_postal_codes and not actual_postal:
+                                postal_valid = False  # Expected postal but none provided
+                            
+                            if country_valid and postal_valid:
+                                current_matches += 1
+                                is_business_rule_match = True
+                                print(f"         {rate_card_original_col}: BUSINESS RULE '{matched_rule}' (country={expected_country}, ETOF={actual_country}) → +1 ✓")
+                            else:
+                                print(f"         {rate_card_original_col}: BUSINESS RULE '{matched_rule}' FAILED (expected={expected_country}, actual={actual_country}, postal_valid={postal_valid}) → +0 ✗")
+                            continue
+                    
+                    if is_business_rule_match:
+                        continue
+                    
+                    # 3. Check if this column has CONDITIONS for the rate card value
+                    if conditions_dict and rate_card_original_col:
+                        conditions_for_col = conditions_dict.get(rate_card_original_col, [])
+                        if conditions_for_col:
+                            # Check if any condition applies to this rate card value
+                            condition_matched, matching_cond = check_value_against_conditions(
+                                etofs_val_raw, rc_val_raw, rate_card_original_col, conditions_dict, debug=False
+                            )
+                            if condition_matched:
+                                current_matches += 1
+                                print(f"         {rate_card_original_col}: CONDITION '{rc_val_raw}' satisfied (ETOF='{etofs_val_raw}') → +1 ✓")
+                                continue
+                            else:
+                                # Condition exists but not satisfied - check if it's for this rate card value
+                                has_condition_for_value = False
+                                for cond in conditions_for_col:
+                                    if str(rc_val_raw).lower() in str(cond).lower():
+                                        has_condition_for_value = True
+                                        break
+                                if has_condition_for_value:
+                                    print(f"         {rate_card_original_col}: CONDITION '{rc_val_raw}' NOT satisfied (ETOF='{etofs_val_raw}') → +0 ✗")
+                                    continue
+                    
+                    # 4. POSTAL CODE columns - "starts with" matching
+                    is_postal_code_column = 'post' in col_norm.lower() or 'ship_post' in col_norm.lower() or 'cust_post' in col_norm.lower()
                     if is_postal_code_column and etofs_val and rc_val:
-                        # For postal codes: count as match if shipment starts with rate card value
                         if str(etofs_val).startswith(str(rc_val)):
                             current_matches += 1
-                    elif etofs_val == rc_val:
+                            print(f"         {rate_card_original_col}: POSTAL PREFIX '{rc_val}' matches '{etofs_val}' → +1 ✓")
+                            continue
+                        else:
+                            print(f"         {rate_card_original_col}: POSTAL PREFIX '{rc_val}' NOT in '{etofs_val}' → +0 ✗")
+                            continue
+                    
+                    # 5. EXACT MATCH
+                    if etofs_val == rc_val:
                         current_matches += 1
+                        print(f"         {rate_card_original_col}: EXACT MATCH '{rc_val}' → +1 ✓")
+                    else:
+                        print(f"         {rate_card_original_col}: NO MATCH (RC='{rc_val}', ETOF='{etofs_val}') → +0 ✗")
+            
+            print(f"      [SCORING] Lane {lane_num} TOTAL: {current_matches} matches")
             
             # Update best matches
             if current_matches > max_matches:
                 max_matches = current_matches
                 best_matching_rate_card_rows = [{'rate_card_row': row_rate_card.to_dict(), 'discrepancies': []}]
+                print(f"      [SCORING] ★ NEW BEST MATCH! Lane {lane_num} with {current_matches} matches")
             elif current_matches == max_matches and current_matches > 0:  # Only append if there's at least one match
                 best_matching_rate_card_rows.append({'rate_card_row': row_rate_card.to_dict(), 'discrepancies': []})
+                print(f"      [SCORING] ★ TIED with best ({current_matches} matches), adding Lane {lane_num}")
         
         # Track if we have too many matches (will be analyzed after discrepancies are collected)
         too_many_matches = len(best_matching_rate_card_rows) > 4
@@ -1752,24 +1917,71 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         
         # Note: Business rules were already validated in PRE-STEP before country validation
         # columns_validated_by_business_rules and business_rule_validation_messages are already populated
-        print(f"   [DEBUG] Business rules already validated in PRE-STEP")
-        print(f"   [DEBUG] Columns validated by business rules: {columns_validated_by_business_rules}")
-        print(f"   [DEBUG] Validation messages: {len(business_rule_validation_messages)}")
+        # BUT we will filter them PER-LANE during discrepancy checking
+        print(f"   [DEBUG] Business rules validated in PRE-STEP (will be filtered per-lane)")
+        print(f"   [DEBUG] Raw columns validated by business rules: {columns_validated_by_business_rules}")
+        print(f"   [DEBUG] Raw validation messages: {len(business_rule_validation_messages)}")
         
-        if columns_validated_by_business_rules:
-            print(f"   [DEBUG Row {index_etofs}] COLUMNS TO SKIP (validated by business rules): {columns_validated_by_business_rules}")
-        
-        # Add ALL business rule validation messages (both success AND failure)
-        if business_rule_validation_messages:
-            for br_msg in business_rule_validation_messages:
-                comments_for_current_etofs_row.append(br_msg)
-                print(f"   [COMMENT] Adding business rule message: {br_msg}")
+        # Store original validated columns for per-lane filtering
+        original_validated_columns = columns_validated_by_business_rules.copy()
+        original_br_messages = business_rule_validation_messages.copy()
         
         # ===== STEP 4: Identify discrepancies for best matching rows =====
         print(f"\n   [DEBUG Row {index_etofs}] Identifying discrepancies for {len(best_matching_rate_card_rows)} best matching rows...")
         for match_idx, best_match_info in enumerate(best_matching_rate_card_rows):
             rate_card_row_dict = best_match_info['rate_card_row']
             discrepancies = []
+            
+            # === PER-LANE: Filter business rules based on THIS lane's values ===
+            lane_validated_columns = set()
+            lane_br_messages = []
+            
+            if business_rules_lookup:
+                br_cols = business_rules_lookup.get('business_rule_columns', set())
+                column_to_rules = business_rules_lookup.get('column_to_rules', {})
+                
+                # Find which business rule columns have NON-EMPTY values in THIS lane
+                active_br_rules = set()
+                for br_col_name in br_cols:
+                    # Find the column in the rate card row
+                    rc_value = None
+                    for rc_col in rate_card_row_dict.keys():
+                        if normalize_column_name(rc_col) == normalize_column_name(br_col_name):
+                            rc_value = rate_card_row_dict.get(rc_col)
+                            break
+                    
+                    # If this lane has a value in this column, the business rule is active for this lane
+                    if rc_value is not None and not pd.isna(rc_value) and str(rc_value).strip() not in ['', 'nan', 'none']:
+                        rules_in_col = column_to_rules.get(br_col_name, [])
+                        for rule in rules_in_col:
+                            active_br_rules.add(str(rule).lower())
+                        print(f"      [LANE {match_idx + 1}] Column '{br_col_name}' has value '{rc_value}' - rules active: {rules_in_col}")
+                    else:
+                        print(f"      [LANE {match_idx + 1}] Column '{br_col_name}' is EMPTY - wildcard (no business rule)")
+                
+                # Filter validated columns for this lane
+                for validated_col in original_validated_columns:
+                    for rc_col in rate_card_row_dict.keys():
+                        if normalize_column_name(rc_col) == validated_col:
+                            rc_value = rate_card_row_dict.get(rc_col)
+                            if rc_value is not None and not pd.isna(rc_value) and str(rc_value).strip() not in ['', 'nan', 'none']:
+                                lane_validated_columns.add(validated_col)
+                            break
+                
+                # Filter messages for this lane
+                for br_msg in original_br_messages:
+                    rule_match = re.search(r"rule '([^']+)'", br_msg, re.IGNORECASE)
+                    if rule_match:
+                        rule_name = rule_match.group(1).lower()
+                        if rule_name in active_br_rules:
+                            lane_br_messages.append(br_msg)
+                
+                print(f"      [LANE {match_idx + 1}] Active validated columns: {lane_validated_columns}")
+                print(f"      [LANE {match_idx + 1}] Active BR messages: {len(lane_br_messages)}")
+            
+            # Store lane-specific business rule info in the match info
+            best_match_info['lane_validated_columns'] = lane_validated_columns
+            best_match_info['lane_br_messages'] = lane_br_messages
             
             # Date validation (check for each match, but don't skip if only some are invalid)
             if date_col and date_value and valid_from_col and valid_to_col:
@@ -1852,14 +2064,14 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                 etofs_original_col = common_etofs_cols_original[i]
                 rate_card_original_col = common_rate_card_cols_original[i]
                 
-                # Skip columns that were validated by business rules
+                # Skip columns that were validated by business rules FOR THIS LANE
                 etofs_col_norm = normalize_column_name(etofs_original_col)
-                if etofs_col_norm in columns_validated_by_business_rules:
+                if etofs_col_norm in lane_validated_columns:
                     if debug_conditions:
                         print(f"\n      {'>'*40}")
                         print(f"      [SKIPPING] Column '{etofs_original_col}' (normalized: '{etofs_col_norm}')")
-                        print(f"      [SKIPPING]   Reason: VALIDATED BY BUSINESS RULE")
-                        print(f"      [SKIPPING]   Skip set contains: {columns_validated_by_business_rules}")
+                        print(f"      [SKIPPING]   Reason: VALIDATED BY BUSINESS RULE (for this lane)")
+                        print(f"      [SKIPPING]   Lane skip set: {lane_validated_columns}")
                         print(f"      {'>'*40}")
                     continue
                 
@@ -1869,6 +2081,14 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                 # Normalize values for consistent comparison for discrepancy reporting
                 normalized_etofs_val = normalize_value(etofs_val)
                 normalized_rate_card_val = normalize_value(rate_card_val)
+                
+                # WILDCARD: If rate card value is empty/NaN, it means ANY value is acceptable
+                # Skip this column from discrepancy checking (empty = wildcard)
+                if normalized_rate_card_val is None:
+                    if debug_conditions:
+                        print(f"\n      [WILDCARD] Column '{rate_card_original_col}' is EMPTY in rate card - any value accepted")
+                        print(f"         - Shipment value: '{etofs_val}' → ACCEPTED (wildcard)")
+                    continue
                 
                 # Special handling for postal code columns - check "starts with" instead of exact match
                 is_postal_code_column = 'post' in col_norm.lower() or 'ship_post' in col_norm.lower() or 'cust_post' in col_norm.lower() or 'postal' in col_norm.lower()
@@ -1949,6 +2169,16 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         
         # If too many matches (>4 lanes), use pattern analysis to find dominant issue
         if too_many_matches:
+            # Add business rule messages that are common across all lanes
+            all_lane_br_messages = []
+            for match_info in best_matching_rate_card_rows:
+                all_lane_br_messages.extend(match_info.get('lane_br_messages', []))
+            # Get unique messages
+            unique_br_messages = list(dict.fromkeys(all_lane_br_messages))
+            for br_msg in unique_br_messages:
+                if br_msg not in comments_for_current_etofs_row:
+                    comments_for_current_etofs_row.append(br_msg)
+            
             # Collect ALL discrepancies from all matches for pattern analysis
             all_discrepancies = []
             for match_info in best_matching_rate_card_rows:
@@ -1990,6 +2220,14 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         # Add discrepancy details to comments only if "please recheck" is not present and not too many matches
         if not has_recheck_comment and not too_many_matches:
             for match_idx, best_match_info in enumerate(best_matching_rate_card_rows):
+                # Add per-lane business rule messages first
+                lane_br_messages = best_match_info.get('lane_br_messages', [])
+                if lane_br_messages:
+                    for br_msg in lane_br_messages:
+                        if br_msg not in comments_for_current_etofs_row:  # Avoid duplicates
+                            comments_for_current_etofs_row.append(br_msg)
+                            print(f"   [COMMENT] Adding per-lane business rule message (Lane {match_idx + 1}): {br_msg}")
+                
                 discrepancies = best_match_info['discrepancies']
                 if discrepancies:
                     rate_card_row_dict = best_match_info['rate_card_row']
@@ -2011,7 +2249,6 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
                             
                             if condition_text:
                                 # Try to extract code from condition like "Long Beach: equals LGB" or "Long Beach: equals LGB,LAX"
-                                import re
                                 equals_match = re.search(r':\s*equals?\s+([^\n]+)', str(condition_text), re.IGNORECASE)
                                 print(f"   [DEBUG DISCREPANCY]   equals_match: {equals_match}")
                                 if equals_match:
@@ -2129,6 +2366,16 @@ def match_shipments_with_rate_card(df_etofs, df_filtered_rate_card, common_colum
         else:
             df_etofs.loc[index_etofs, 'comment'] = 'No discrepancies found'
             print(f"   [COMMENT] Row {index_etofs}: No discrepancies found")
+    
+    # Restore stdout and close debug file
+    print(f"\n=== MATCHING COMPLETE ===")
+    print(f"Debug log saved to: {debug_log_file}")
+    sys.stdout = original_stdout
+    if debug_file:
+        try:
+            debug_file.close()
+        except:
+            pass
     
     return df_etofs
 
@@ -2606,4 +2853,5 @@ def run_matching(rate_card_file_path=None):
 
 if __name__ == "__main__":
     run_matching()
+
 
