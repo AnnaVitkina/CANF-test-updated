@@ -359,25 +359,21 @@ def is_shipment_id_column(column_name):
 
 
 # CUSTOM LOGIC MAPPINGS
-# Format: {(carrier_id, shipper_id, transport_mode, ship_port): {source_col: standard_col}}
-# ship_port is the Origin Airport code (SHIP_PORT)
+# Format: {(carrier_id, shipper_id, transport_mode): {source_col: standard_col}}
 CUSTOM_LOGIC_MAPPINGS = {
     # Custom mapping for dairb: map LC column "SERVICE" to rate card column "Service"
     (None, 'dairb', None): {
         'SERVICE': 'Service'
     },
-    (None, 'iffdgf', None): {
-        'CONT_LOAD': 'Container Type',
-    },
+    # Custom mapping for apple: map ETOF/LC columns to rate card columns
     (None, 'apple', None): {
         'Carrier': 'Carrier Name',
         'Original service': 'Lane Type'
     },
-    # Example custom mappings - add your specific mappings here
-    # ('CARRIER1', 'SHIPPER1', 'AIR', 'JFK'): {
-    #     'Origin airport': 'Origin Airport Code',
-    #     'Destination airport': 'Destination Airport Code'
-    # },
+
+    (None, 'iffdgf', None): {
+        'CONT_LOAD': 'Container Type',
+    },
     # Add more custom mappings as needed
 }
 
@@ -387,7 +383,7 @@ EXCLUDED_COLUMNS = [
     'ETOF#',
     'LC #',
     'LC#',
-    'Carrier',
+    # 'Carrier' removed - mapped to 'Carrier Name' for apple shipper via CUSTOM_LOGIC_MAPPINGS
     'Delivery Number',
     'DeliveryNumber',
     'Lane #',
@@ -628,8 +624,8 @@ def create_vocabulary_dataframe(
             if has_custom_logic and shipper_id:
                 # Check all custom logic entries for this standard column
                 for (carrier_id_key, shipper_id_key, transport_mode_key), mapping_dict in CUSTOM_LOGIC_MAPPINGS.items():
-                    # Check if shipper_id matches (if specified in custom logic)
-                    if shipper_id_key and shipper_id_key != shipper_id:
+                    # Check if shipper_id matches (if specified in custom logic) - case insensitive
+                    if shipper_id_key and shipper_id_key.lower() != shipper_id.lower():
                         continue
                     
                     # Check if this standard column has a custom mapping
@@ -944,11 +940,51 @@ def map_and_rename_columns(
             etof_columns = [col for col in etof_df.columns 
                           if not is_excluded_column(col) and col not in used_etof_columns]
             if etof_columns:
-                match, confidence = find_semantic_match_llm(rate_card_col, etof_columns, threshold=0.3)
-                if match and not is_excluded_column(match) and match not in used_etof_columns:
-                    etof_match = match
-                    etof_mappings[rate_card_col] = match
-                    used_etof_columns.add(match)
+                # Check custom logic first if available
+                custom_match_found = False
+                if shipper_id and len(CUSTOM_LOGIC_MAPPINGS) > 0:
+                    print(f"\n[DEBUG CUSTOM] Checking custom mapping for rate_card_col='{rate_card_col}', shipper_id='{shipper_id}'")
+                    print(f"[DEBUG CUSTOM] ETOF columns available: {etof_columns[:10]}{'...' if len(etof_columns) > 10 else ''}")
+                    for (carrier_id_key, shipper_id_key, transport_mode_key), mapping_dict in CUSTOM_LOGIC_MAPPINGS.items():
+                        print(f"[DEBUG CUSTOM] Checking mapping key: ({carrier_id_key}, {shipper_id_key}, {transport_mode_key})")
+                        print(f"[DEBUG CUSTOM] Mapping dict: {mapping_dict}")
+                        print(f"[DEBUG CUSTOM] Mapping dict values: {list(mapping_dict.values())}")
+                        # Check if shipper_id matches (case insensitive)
+                        if shipper_id_key and shipper_id_key.lower() == shipper_id.lower():
+                            print(f"[DEBUG CUSTOM] Shipper match! shipper_id_key='{shipper_id_key}' == shipper_id='{shipper_id}'")
+                            # Check if this rate card column has a custom mapping
+                            print(f"[DEBUG CUSTOM] Is '{rate_card_col}' in {list(mapping_dict.values())}? {rate_card_col in mapping_dict.values()}")
+                            if rate_card_col in mapping_dict.values():
+                                print(f"[DEBUG CUSTOM] Found rate_card_col '{rate_card_col}' in mapping values!")
+                                # Find the source column that maps to this rate card column
+                                for source_col, mapped_standard in mapping_dict.items():
+                                    print(f"[DEBUG CUSTOM] Checking: source_col='{source_col}' -> mapped_standard='{mapped_standard}'")
+                                    print(f"[DEBUG CUSTOM] mapped_standard == rate_card_col? {mapped_standard == rate_card_col}")
+                                    print(f"[DEBUG CUSTOM] source_col in etof_columns? {source_col in etof_columns}")
+                                    if mapped_standard == rate_card_col and source_col in etof_columns:
+                                        if not is_excluded_column(source_col) and source_col not in used_etof_columns:
+                                            print(f"[DEBUG CUSTOM] ✓ CUSTOM MATCH FOUND: '{source_col}' -> '{rate_card_col}'")
+                                            etof_match = source_col
+                                            etof_mappings[rate_card_col] = source_col
+                                            used_etof_columns.add(source_col)
+                                            custom_match_found = True
+                                            break
+                                        else:
+                                            print(f"[DEBUG CUSTOM] ✗ Excluded or already used: is_excluded={is_excluded_column(source_col)}, already_used={source_col in used_etof_columns}")
+                        else:
+                            print(f"[DEBUG CUSTOM] Shipper mismatch: shipper_id_key='{shipper_id_key}' != shipper_id='{shipper_id}'")
+                        if custom_match_found:
+                            break
+                    if not custom_match_found:
+                        print(f"[DEBUG CUSTOM] No custom match found for '{rate_card_col}'")
+                
+                # Use semantic matching if no custom mapping found
+                if not custom_match_found:
+                    match, confidence = find_semantic_match_llm(rate_card_col, etof_columns, threshold=0.3)
+                    if match and not is_excluded_column(match) and match not in used_etof_columns:
+                        etof_match = match
+                        etof_mappings[rate_card_col] = match
+                        used_etof_columns.add(match)
         
         # Find match in LC (only if column hasn't been used yet)
         if lc_df is not None and not lc_df.empty:
@@ -959,8 +995,8 @@ def map_and_rename_columns(
                 custom_match_found = False
                 if shipper_id and len(CUSTOM_LOGIC_MAPPINGS) > 0:
                     for (carrier_id_key, shipper_id_key, transport_mode_key), mapping_dict in CUSTOM_LOGIC_MAPPINGS.items():
-                        # Check if shipper_id matches
-                        if shipper_id_key and shipper_id_key == shipper_id:
+                        # Check if shipper_id matches (case insensitive)
+                        if shipper_id_key and shipper_id_key.lower() == shipper_id.lower():
                             # Check if this rate card column has a custom mapping
                             if rate_card_col in mapping_dict.values():
                                 # Find the source column that maps to this rate card column
@@ -988,11 +1024,33 @@ def map_and_rename_columns(
             origin_columns = [col for col in origin_df.columns 
                             if not is_excluded_column(col) and col not in used_origin_columns]
             if origin_columns:
-                match, confidence = find_semantic_match_llm(rate_card_col, origin_columns, threshold=0.3)
-                if match and not is_excluded_column(match) and match not in used_origin_columns:
-                    origin_match = match
-                    origin_mappings[rate_card_col] = match
-                    used_origin_columns.add(match)
+                # Check custom logic first if available
+                custom_match_found = False
+                if shipper_id and len(CUSTOM_LOGIC_MAPPINGS) > 0:
+                    for (carrier_id_key, shipper_id_key, transport_mode_key), mapping_dict in CUSTOM_LOGIC_MAPPINGS.items():
+                        # Check if shipper_id matches (case insensitive)
+                        if shipper_id_key and shipper_id_key.lower() == shipper_id.lower():
+                            # Check if this rate card column has a custom mapping
+                            if rate_card_col in mapping_dict.values():
+                                # Find the source column that maps to this rate card column
+                                for source_col, mapped_standard in mapping_dict.items():
+                                    if mapped_standard == rate_card_col and source_col in origin_columns:
+                                        if not is_excluded_column(source_col) and source_col not in used_origin_columns:
+                                            origin_match = source_col
+                                            origin_mappings[rate_card_col] = source_col
+                                            used_origin_columns.add(source_col)
+                                            custom_match_found = True
+                                            break
+                        if custom_match_found:
+                            break
+                
+                # Use semantic matching if no custom mapping found
+                if not custom_match_found:
+                    match, confidence = find_semantic_match_llm(rate_card_col, origin_columns, threshold=0.3)
+                    if match and not is_excluded_column(match) and match not in used_origin_columns:
+                        origin_match = match
+                        origin_mappings[rate_card_col] = match
+                        used_origin_columns.add(match)
         
         mapping_results.append({
             'Rate_Card_Column': rate_card_col,
@@ -1613,24 +1671,23 @@ def map_and_rename_columns(
 
 # Example usage
 #if __name__ == "__main__":
-    #try:
+#    try:
         # Main function: Map and rename columns
-     #   etof_renamed, lc_renamed, origin_renamed = map_and_rename_columns(
-       #    rate_card_file_path="rate_sie.xlsx",
-       #    etof_file_path="etofs_sie.xlsx",
-            #origin_file_path="file_dairb.xlsx",
-            #origin_header_row=16,
-            #origin_end_column=33,
+ #       etof_renamed, lc_renamed, origin_renamed = map_and_rename_columns(
+  #         rate_card_file_path="rate_johnson.xlsx",
+   #        etof_file_path="etof_johnson.xlsx",
+    #        #origin_file_path="file_dairb.xlsx",
+     #       #origin_header_row=16,
+      #      #origin_end_column=33,
             #order_files_path="Order_files_export.xls.xlsx",
-            #lc_input_path="lc_dairb.xml",
+            #lc_input_path="lc_densir_13.01.2026.xml",
             #ignore_rate_card_columns=["Business Unit Name", "Remark"],
-          #  shipper_id="sie"  # Custom logic: maps "SHAI Reference" to "SHIPMENT_ID" for dairb
-     #   )
-   # except Exception:
+       #     shipper_id="johnson"  # Custom logic: maps "SHAI Reference" to "SHIPMENT_ID" for dairb
+        #)
+    #except Exception:
      #   pass  
 
  
-
 
 
 
