@@ -58,7 +58,7 @@ def clean_comment_line(line):
         else:
             cleaned_line = re.sub(r"Date '[^']+'", "Date", line_stripped)
             return cleaned_line
-
+    
     # Pattern 5: "Also: Flow Type: →" or "Also: <Field>: →" -> "Another possible change: <Field> should be different"
     match = re.match(r"^Also:\s*(.+?):\s*→", line_stripped)
     if match:
@@ -66,7 +66,7 @@ def clean_comment_line(line):
         return f"Another possible change: {field_name} should be different"
     
     # Pattern 6: Generic - remove any quoted values from the line
-    # This catches other patterns we might have missed
+    # Catches other patterns we might have missed
     cleaned = re.sub(r"'[^']*'", "", line_stripped)
     # Clean up extra spaces
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
@@ -339,4 +339,3 @@ if __name__ == "__main__":
         matching_output_file=None,  # Will auto-detect Matched_Shipments_with.xlsx
         shipper_value=SHIPPER_VALUE
     )
-
