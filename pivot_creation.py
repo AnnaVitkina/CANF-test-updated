@@ -64,7 +64,7 @@ def clean_comment_line(line):
     match = re.match(r"^Also:\s*(.+?):\s*(?:'[^']*'\s*)?→", line_stripped)
     if match:
         field_name = match.group(1).strip()
-        return f"{field_name}: needs to be changed"
+        return f"{field_name}: Shipment value needs to be changed"
     
     # Pattern 6: Generic - remove any quoted values from the line
     # Catches other patterns we might have missed
@@ -340,5 +340,6 @@ if __name__ == "__main__":
         matching_output_file=None,  # Will auto-detect Matched_Shipments_with.xlsx
         shipper_value=SHIPPER_VALUE
     )
+
 
 
