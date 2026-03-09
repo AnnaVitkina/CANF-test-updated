@@ -120,12 +120,13 @@ def update_canf_file(matching_output_file=None,
             print(f"Loaded {len(df_etofs)} rows from first sheet")
 
         # Prepare data for Google Sheets: Carrier, Cause of CANF, Amount
-        # Check for carrier column: Carrier, CARRIER_NAME, or Carier
+        # Check for carrier column: Carrier, CARRIER_NAME, or Carier — use the one with most non-empty values
+        def non_empty_count(series):
+            return series.dropna().astype(str).str.strip().ne('').sum()
+        carrier_candidates = [name for name in ('Carrier', 'CARRIER_NAME', 'Carier') if name in df_etofs.columns]
         carrier_col = None
-        for name in ('Carrier', 'CARRIER_NAME', 'Carier'):
-            if name in df_etofs.columns:
-                carrier_col = name
-                break
+        if carrier_candidates:
+            carrier_col = max(carrier_candidates, key=lambda c: non_empty_count(df_etofs[c]))
         # Check for 'comment' column (matching.py uses 'comment', not 'Comments')
         comment_col = None
         if 'comment' in df_etofs.columns:
