@@ -120,6 +120,12 @@ def update_canf_file(matching_output_file=None,
             print(f"Loaded {len(df_etofs)} rows from first sheet")
 
         # Prepare data for Google Sheets: Carrier, Cause of CANF, Amount
+        # Check for carrier column: Carrier, CARRIER_NAME, or Carier
+        carrier_col = None
+        for name in ('Carrier', 'CARRIER_NAME', 'Carier'):
+            if name in df_etofs.columns:
+                carrier_col = name
+                break
         # Check for 'comment' column (matching.py uses 'comment', not 'Comments')
         comment_col = None
         if 'comment' in df_etofs.columns:
@@ -127,11 +133,11 @@ def update_canf_file(matching_output_file=None,
         elif 'Comments' in df_etofs.columns:
             comment_col = 'Comments'
         
-        if 'Carrier' in df_etofs.columns and comment_col:
+        if carrier_col and comment_col:
             # Create cross-product of Carrier and cleaned Comments
-            # First, merge Carrier with cleaned comments
-            carrier_cause_df = df_etofs[['Carrier', comment_col]].copy()
-            carrier_cause_df.rename(columns={comment_col: 'Comments'}, inplace=True)
+            # First, merge carrier column with cleaned comments
+            carrier_cause_df = df_etofs[[carrier_col, comment_col]].copy()
+            carrier_cause_df.rename(columns={comment_col: 'Comments', carrier_col: 'Carrier'}, inplace=True)
             
             # Expand comments: split multi-line comments into separate rows
             # Each line becomes a separate row for proper grouping
@@ -169,12 +175,15 @@ def update_canf_file(matching_output_file=None,
                 else:
                     google_sheets_data['Shipper Value'] = 'Not provided'
                 
-                # Reorder columns: Shipper Value, Carrier, Cause of CANF, Amount
-                google_sheets_data = google_sheets_data[['Shipper Value', 'Carrier', 'Cause of CANF', 'Amount']]
+                # Add Carrier Name column (same values as Carrier)
+                google_sheets_data['Carrier Name'] = google_sheets_data['Carrier']
+                
+                # Reorder columns: Shipper Value, Carrier, Carrier Name, Cause of CANF, Amount
+                google_sheets_data = google_sheets_data[['Shipper Value', 'Carrier', 'Carrier Name', 'Cause of CANF', 'Amount']]
                 google_sheets_data = google_sheets_data.sort_values(['Carrier', 'Cause of CANF'])
                 
             else:
-                google_sheets_data = pd.DataFrame(columns=['Shipper Value', 'Carrier', 'Cause of CANF', 'Amount'])
+                google_sheets_data = pd.DataFrame(columns=['Shipper Value', 'Carrier', 'Carrier Name', 'Cause of CANF', 'Amount'])
 
             print(f"\nPrepared {len(google_sheets_data)} Carrier-Cause combinations.")
 
@@ -287,7 +296,7 @@ def update_canf_file(matching_output_file=None,
                 traceback.print_exc()
                 return False
         else:
-            print(f"Carrier or Comments column not found. Available columns: {list(df_etofs.columns)}")
+            print(f"Carrier column (Carrier, CARRIER_NAME, or Carier) or Comments column not found. Available columns: {list(df_etofs.columns)}")
             print("Skipping Excel file update.")
             return False
 
@@ -300,11 +309,11 @@ def update_canf_file(matching_output_file=None,
         return False
 
 # Example usage:
-#if __name__ == "__main__":
-#    #USER INPUT: Provide shipper value here
-#    SHIPPER_VALUE = "coty"  # Change this to your shipper value
+if __name__ == "__main__":
+    #USER INPUT: Provide shipper value here
+    SHIPPER_VALUE = "coty"  # Change this to your shipper value
     
-#    update_canf_file(
- #       matching_output_file=None,  # Will auto-detect Matched_Shipments_with.xlsx
- #       shipper_value=SHIPPER_VALUE
- #   )
+    update_canf_file(
+        matching_output_file=None,  # Will auto-detect Matched_Shipments_with.xlsx
+        shipper_value=SHIPPER_VALUE
+    )
