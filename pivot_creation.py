@@ -142,9 +142,13 @@ def update_canf_file(matching_output_file=None,
             # Expand comments: split multi-line comments into separate rows
             # Each line becomes a separate row for proper grouping
             expanded_rows = []
+            carriers_with_comment = set()
+            all_carriers = set()
             for idx, row in carrier_cause_df.iterrows():
                 carrier = row['Carrier']
                 comment = row['Comments']
+                if pd.notna(carrier) and str(carrier).strip() != '':
+                    all_carriers.add(carrier)
                 
                 if pd.isna(comment) or comment == '':
                     continue
@@ -161,6 +165,17 @@ def update_canf_file(matching_output_file=None,
                             'Carrier': carrier,
                             'Cause of CANF': cleaned_line
                         })
+                        carriers_with_comment.add(carrier)
+            
+            # Fallback: carriers with no comment (or all lines filtered out) get one row "No comment"
+            carriers_no_comment = [c for c in all_carriers if c not in carriers_with_comment]
+            for carrier in carriers_no_comment:
+                expanded_rows.append({
+                    'Carrier': carrier,
+                    'Cause of CANF': 'No comment'
+                })
+            if carriers_no_comment:
+                print(f"  (No comment text for {len(carriers_no_comment)} carrier(s); added 'No comment' for pivot.)")
             
             # Create dataframe from expanded rows
             if expanded_rows:
