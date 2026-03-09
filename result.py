@@ -909,13 +909,14 @@ if __name__ == "__main__":
             #demo.launch(share=True, debug=False, show_error=True)
         else:
             print("🚀 Launching Gradio interface for Google Colab (local access)...")
-            demo.launch(server_name="0.0.0.0", share=False, debug=False, show_error=True)
+            demo.launch(server_name="0.0.0.0", share=False, debug=True, show_error=True)
     else:
         # For local execution
         print("🚀 Launching Gradio interface locally...")
         print(f"💡 Input files will be saved to: {input_dir}")
         print(f"💡 Output files will be saved to: {output_dir}")
         demo.launch(server_name="127.0.0.1", share=False)
+
 
 
 
