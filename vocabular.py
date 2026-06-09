@@ -373,6 +373,7 @@ CUSTOM_LOGIC_MAPPINGS = {
 
     (None, 'iffdgf', None): {
         'CONT_LOAD': 'Container Type',
+        'LANE_ID': 'Lane Id (Service Type)',
     },
     # Add more custom mappings as needed
 }
