@@ -45,6 +45,59 @@ def fuzzy_match_filename(filename, order_file_names):
         return None
 
 
+SHIPMENT_ID_COLUMN_VARIATIONS = [
+    'SHIPMENT_ID',
+    'SHIPMENT ID(s)',
+    'SHIPMENT ID',
+    'SHIPMENT_ID(s)',
+    'Shipment ID(s)',
+    'Shipment ID',
+    'ShipmentID',
+    'shipment id',
+    'shipmentid',
+]
+
+
+def _normalize_column_key(col_name):
+    """Normalize column name for fuzzy shipment-id column matching."""
+    return str(col_name).lower().replace(' ', '').replace('_', '').replace('(', '').replace(')', '')
+
+
+def find_shipment_id_column(dataframe):
+    """
+    Find a shipment ID column in a dataframe (ETOF or LC).
+    Tries exact name matches first, then normalized names (shipmentid / shipmentids).
+    """
+    if dataframe is None or dataframe.empty:
+        return None
+
+    for col in SHIPMENT_ID_COLUMN_VARIATIONS:
+        if col in dataframe.columns:
+            return col
+
+    for col in dataframe.columns:
+        col_norm = _normalize_column_key(col)
+        if col_norm in ('shipmentid', 'shipmentids'):
+            return col
+
+    return None
+
+
+def _expand_id_values(value):
+    """Split comma/semicolon-separated IDs; return list of non-empty stripped strings."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return []
+    s = str(value).strip()
+    if not s or s.lower() in ('nan', 'none', 'null'):
+        return []
+    if ',' in s or ';' in s:
+        return [
+            part.strip() for part in s.replace(';', ',').split(',')
+            if part.strip() and part.strip().lower() not in ('nan', 'none', 'null')
+        ]
+    return [s]
+
+
 def map_order_file_to_lc(order_files_dataframe, lc_dataframe):
     """
     Map "Order file #" from order_files_dataframe to lc_dataframe based on matching
@@ -95,13 +148,13 @@ def map_order_file_to_lc(order_files_dataframe, lc_dataframe):
 def map_etof_to_lc(etof_dataframe, lc_dataframe_updated):
     """
     Map "ETOF #" from etof_dataframe to lc_dataframe_updated.
-    If SHIPMENT_ID is present in both dataframes, uses SHIPMENT_ID for mapping.
-    Otherwise, uses "Order file #" (from lc_dataframe_updated) with "LC #" (from etof_dataframe).
-    Also renames "Order file #" column to "LC #".
+    If a shipment ID column is present in both dataframes (e.g. SHIPMENT_ID, SHIPMENT ID(s)),
+    uses that column for mapping. Otherwise falls back to DELIVERY_NUMBER or LC # / Order file #.
+    Also renames "Order file #" column to "LC #" when applicable.
     
     Args:
-        etof_dataframe: DataFrame with "ETOF #" column and optionally "LC #" and "SHIPMENT_ID" columns
-        lc_dataframe_updated: DataFrame with "Order file #" column (from previous mapping) and optionally "SHIPMENT_ID"
+        etof_dataframe: DataFrame with "ETOF #" column and optionally "LC #" and shipment ID columns
+        lc_dataframe_updated: DataFrame with "Order file #" column (from previous mapping) and optionally shipment ID
     
     Returns:
         tuple: (dataframe, list of column names)
@@ -115,10 +168,10 @@ def map_etof_to_lc(etof_dataframe, lc_dataframe_updated):
     if 'ETOF #' not in etof_dataframe.columns:
         raise ValueError("etof_dataframe must have 'ETOF #' column")
     
-    # Check if SHIPMENT_ID is present in both dataframes
-    has_shipment_id_etof = 'SHIPMENT_ID' in etof_dataframe.columns
-    has_shipment_id_lc = 'SHIPMENT_ID' in lc_dataframe_final.columns
-    use_shipment_id = has_shipment_id_etof and has_shipment_id_lc
+    # Find shipment ID columns (handle naming variations on ETOF and LC)
+    shipment_col_etof = find_shipment_id_column(etof_dataframe)
+    shipment_col_lc = find_shipment_id_column(lc_dataframe_final)
+    use_shipment_id = shipment_col_etof is not None and shipment_col_lc is not None
     
     # Check if DELIVERY_NUMBER is present in both dataframes (fallback option)
     # Find DELIVERY_NUMBER column in LC (handle variations)
@@ -139,43 +192,71 @@ def map_etof_to_lc(etof_dataframe, lc_dataframe_updated):
     use_delivery_number = delivery_col_lc is not None and delivery_col_etof is not None
     
     if use_shipment_id:
-        # Use SHIPMENT_ID for mapping
-        # Create mapping dictionaries: SHIPMENT_ID (from ETOF) -> ETOF # and LC # (from ETOF)
-        shipment_to_etof = {}
-        shipment_to_lc = {}
+        print(f"   Using SHIPMENT_ID mapping: LC column '{shipment_col_lc}' <-> ETOF column '{shipment_col_etof}'")
+
+        # Create mapping dictionaries: shipment ID (from ETOF) -> ETOF # and LC # (from ETOF)
+        # Supports multi-value ETOF cells (e.g. SHIPMENT ID(s) with comma-separated IDs)
+        shipment_exact_to_etof = {}
+        shipment_exact_to_lc = {}
+        shipment_individual_to_etof = {}
+        shipment_individual_to_lc = {}
+
         for _, row in etof_dataframe.iterrows():
-            shipment_id = str(row.get('SHIPMENT_ID', '')).strip()
+            shipment_raw = row.get(shipment_col_etof)
             etof_value = str(row.get('ETOF #', '')).strip()
             lc_value = str(row.get('LC #', '')).strip() if 'LC #' in etof_dataframe.columns else None
-            
-            if pd.notna(row.get('SHIPMENT_ID')) and shipment_id and shipment_id.lower() != 'nan':
+
+            shipment_ids = _expand_id_values(shipment_raw)
+            if not shipment_ids:
+                continue
+
+            full_shipment_str = str(shipment_raw).strip() if pd.notna(shipment_raw) else ''
+            if full_shipment_str and full_shipment_str.lower() not in ('nan', 'none', 'null'):
                 if pd.notna(row.get('ETOF #')) and etof_value and etof_value.lower() != 'nan':
-                    # Map SHIPMENT_ID (key) to ETOF # (value)
-                    shipment_to_etof[shipment_id] = etof_value
-                
+                    shipment_exact_to_etof[full_shipment_str] = etof_value
                 if lc_value and pd.notna(row.get('LC #')) and lc_value.lower() != 'nan':
-                    # Map SHIPMENT_ID (key) to LC # (value)
-                    shipment_to_lc[shipment_id] = lc_value
-        
-        # Map ETOF # values by matching SHIPMENT_ID
+                    shipment_exact_to_lc[full_shipment_str] = lc_value
+
+            for shipment_id in shipment_ids:
+                if pd.notna(row.get('ETOF #')) and etof_value and etof_value.lower() != 'nan':
+                    shipment_individual_to_etof[shipment_id] = etof_value
+                if lc_value and pd.notna(row.get('LC #')) and lc_value.lower() != 'nan':
+                    shipment_individual_to_lc[shipment_id] = lc_value
+
+        print(f"   Built exact mapping with {len(shipment_exact_to_etof)} full strings -> ETOF #")
+        print(f"   Built individual mapping with {len(shipment_individual_to_etof)} shipment IDs -> ETOF #")
+
+        def _lookup_shipment_id(row, exact_map, individual_map):
+            shipment_raw = row.get(shipment_col_lc)
+            if shipment_raw is None or (isinstance(shipment_raw, float) and pd.isna(shipment_raw)):
+                return None
+
+            shipment_str = str(shipment_raw).strip()
+            if not shipment_str or shipment_str.lower() in ('nan', 'none', 'null'):
+                return None
+
+            if shipment_str in exact_map:
+                return exact_map[shipment_str]
+
+            for shipment_id in _expand_id_values(shipment_raw):
+                if shipment_id in individual_map:
+                    return individual_map[shipment_id]
+
+            return individual_map.get(shipment_str)
+
         def find_etof_number_by_shipment(row):
-            shipment_id = str(row.get('SHIPMENT_ID', '')).strip()
-            if pd.isna(row.get('SHIPMENT_ID')) or shipment_id == '' or shipment_id.lower() == 'nan':
-                return None
-            return shipment_to_etof.get(shipment_id)
-        
-        # Map LC # values by matching SHIPMENT_ID
+            return _lookup_shipment_id(row, shipment_exact_to_etof, shipment_individual_to_etof)
+
         def find_lc_number_by_shipment(row):
-            shipment_id = str(row.get('SHIPMENT_ID', '')).strip()
-            if pd.isna(row.get('SHIPMENT_ID')) or shipment_id == '' or shipment_id.lower() == 'nan':
-                return None
-            return shipment_to_lc.get(shipment_id)
+            return _lookup_shipment_id(row, shipment_exact_to_lc, shipment_individual_to_lc)
         
         # Apply mappings
         lc_dataframe_final['ETOF #'] = lc_dataframe_final.apply(find_etof_number_by_shipment, axis=1)
-        
+        matched_count = lc_dataframe_final['ETOF #'].notna().sum()
+        print(f"   Mapped {matched_count} rows using SHIPMENT_ID")
+
         # Map LC # from ETOF if available, otherwise use existing or create empty
-        if shipment_to_lc:
+        if shipment_exact_to_lc or shipment_individual_to_lc:
             lc_dataframe_final['LC #'] = lc_dataframe_final.apply(find_lc_number_by_shipment, axis=1)
         elif 'Order file #' in lc_dataframe_final.columns:
             lc_dataframe_final = lc_dataframe_final.rename(columns={'Order file #': 'LC #'})
@@ -380,17 +461,17 @@ def process_order_lc_etof_mapping(lc_input_path, etof_path, order_files_path=Non
     return lc_dataframe_final, lc_column_names
 
 
-#if __name__ == "__main__":
-    #lc_input_path = "lc_dairb.xml"
-    #etof_path = "etofs_dairb.xlsx"
+if __name__ == "__main__":
+    lc_input_path = ["LC_missing_shipments_6003607_ISD2026060300127.xml", "LC_missing_shipments_6003607_ISD2026060300126.xml", "LC_missing_shipments_6003607_ISD2026060100097.xml"]
+    etof_path = "etof_file ceva.xlsx"
     
     # If order_files_path is provided, it will use order file mapping logic
     # If not provided (None), it will use SHIPMENT_ID mapping
 #    order_files_path = "Order_files_export.xls.xlsx"  # Set to None or omit to use SHIPMENT_ID mapping
     
-    #df_lc_updated, lc_column_names = process_order_lc_etof_mapping(
-       # lc_input_path, 
-      #  etof_path, 
+    df_lc_updated, lc_column_names = process_order_lc_etof_mapping(
+        lc_input_path, 
+        etof_path, 
         #order_files_path=order_files_path
-#    )
+    )
 
