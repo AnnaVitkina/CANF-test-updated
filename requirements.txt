@@ -1,0 +1,12 @@
+# Core — UI pinned to Gradio 5 (project was written for Gradio 5 API)
+gradio>=5.23.0,<6
+
+# Data processing
+pandas
+openpyxl
+xlrd
+numpy
+
+# Optional: semantic column mapping in vocabular.py (falls back if missing)
+# sentence-transformers
+# scikit-learn
