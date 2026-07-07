@@ -1,173 +1,6 @@
-import inspect
 import os
 import sys
 import gradio as gr
-
-# Gradio 6 restyled File/Block components. CANF theme restores the Gradio 5 Soft look:
-# purple pill labels, Source Sans Pro, soft shadows, solid upload areas.
-CANF_CUSTOM_CSS = """
-.canf-section-label {
-    background: #f3f4f6 !important;
-    color: #374151 !important;
-    font-weight: 600 !important;
-    padding: 0.5rem 0.75rem !important;
-    border-radius: 0.375rem !important;
-    margin: 0 0 0.75rem 0 !important;
-}
-.canf-section-label p {
-    margin: 0 !important;
-    font-weight: 600 !important;
-}
-.canf-title h1 {
-    font-weight: 700 !important;
-    color: #111827 !important;
-}
-.canf-subtitle p {
-    color: #4b5563 !important;
-    font-weight: 400 !important;
-}
-.canf-file-upload .wrap,
-.canf-file-upload .container {
-    border: none !important;
-    box-shadow: none !important;
-    background: transparent !important;
-}
-.canf-file-upload .placeholder,
-.canf-file-upload .upload-container,
-.canf-file-upload [class*="upload"] {
-    border: 1px solid #f3f4f6 !important;
-    border-style: solid !important;
-    border-radius: 0.5rem !important;
-    background: #ffffff !important;
-    box-shadow: 0 1px 4px 0 rgb(0 0 0 / 0.08) !important;
-    min-height: 7rem !important;
-}
-.canf-file-upload .placeholder:hover,
-.canf-file-upload .upload-container:hover {
-    border-color: #e9d5ff !important;
-    box-shadow: 0 2px 5px 0 rgb(0 0 0 / 0.1) !important;
-}
-.canf-file-upload label span,
-.canf-file-upload .label-wrap span,
-.canf-file-upload .icon-wrap {
-    color: #9333ea !important;
-}
-.canf-file-upload a,
-.canf-file-upload button.link,
-.canf-file-upload .or {
-    color: #9333ea !important;
-}
-.canf-file-upload .icon-wrap svg {
-    color: #9333ea !important;
-    fill: #9333ea !important;
-    width: 1.5rem !important;
-    height: 1.5rem !important;
-}
-.canf-accordion > .label-wrap {
-    border: 1px solid #e5e7eb !important;
-    border-radius: 0.5rem !important;
-    background: #ffffff !important;
-}
-"""
-
-def _gradio_major_version():
-    try:
-        return int(gr.__version__.split(".")[0])
-    except (AttributeError, ValueError):
-        return 5
-
-def _supports_param(component_cls, param_name):
-    return param_name in inspect.signature(component_cls.__init__).parameters
-
-IS_GRADIO_6 = _gradio_major_version() >= 6
-
-def build_canf_theme():
-    theme = gr.themes.Soft(
-        primary_hue=gr.themes.colors.purple,
-        secondary_hue=gr.themes.colors.purple,
-        neutral_hue=gr.themes.colors.gray,
-        spacing_size=gr.themes.sizes.spacing_md,
-        radius_size=gr.themes.sizes.radius_md,
-        text_size=gr.themes.sizes.text_md,
-        font=(
-            gr.themes.GoogleFont("Source Sans Pro"),
-            "ui-sans-serif",
-            "system-ui",
-            "-apple-system",
-            "sans-serif",
-        ),
-        font_mono=(
-            gr.themes.GoogleFont("IBM Plex Mono"),
-            "ui-monospace",
-            "Consolas",
-            "monospace",
-        ),
-    )
-    theme = theme.set(
-        background_fill_primary="*neutral_50",
-        block_background_fill="white",
-        block_border_width="0px",
-        block_label_background_fill="*primary_100",
-        block_label_background_fill_dark="*primary_600",
-        block_label_text_color="*primary_500",
-        block_label_text_color_dark="white",
-        block_label_text_weight="600",
-        block_label_radius="*radius_md",
-        block_label_padding="*spacing_sm *spacing_md",
-        block_title_background_fill="*block_label_background_fill",
-        block_title_text_color="*primary_500",
-        block_title_text_weight="600",
-        input_background_fill="white",
-        input_border_color="*neutral_50",
-        input_shadow="0 1px 4px 0 rgb(0 0 0 / 0.1)",
-        input_shadow_focus="0 2px 5px 0 rgb(0 0 0 / 0.1)",
-        shadow_drop="0 1px 4px 0 rgb(0 0 0 / 0.1)",
-        shadow_drop_lg="0 2px 5px 0 rgb(0 0 0 / 0.1)",
-        button_primary_background_fill="*primary_500",
-        button_primary_background_fill_hover="*primary_400",
-        button_primary_text_color="white",
-        link_text_color="*primary_500",
-        link_text_color_hover="*primary_600",
-        link_text_color_active="*primary_700",
-        link_text_color_visited="*primary_600",
-    )
-    if hasattr(theme, "custom_css"):
-        theme.custom_css = CANF_CUSTOM_CSS
-    return theme
-
-GRADIO_THEME = build_canf_theme()
-
-def _blocks_kwargs():
-    kwargs = {"title": "CANF Analyzer"}
-    if _supports_param(gr.Blocks, "fill_width"):
-        kwargs["fill_width"] = True
-    if not IS_GRADIO_6:
-        kwargs["theme"] = GRADIO_THEME
-        if _supports_param(gr.Blocks, "css"):
-            kwargs["css"] = CANF_CUSTOM_CSS
-    return kwargs
-
-def _launch_kwargs():
-    kwargs = {}
-    if IS_GRADIO_6:
-        kwargs["theme"] = GRADIO_THEME
-        kwargs["css"] = CANF_CUSTOM_CSS
-    return kwargs
-
-def _file_upload_kwargs():
-    kwargs = {"elem_classes": ["canf-file-upload"]}
-    if _supports_param(gr.File, "height"):
-        kwargs["height"] = 120
-    return kwargs
-
-def _status_textbox_kwargs():
-    if _supports_param(gr.Textbox, "buttons"):
-        return {"buttons": ["copy"]}
-    if _supports_param(gr.Textbox, "show_copy_button"):
-        return {"show_copy_button": True}
-    return {}
-
-FILE_UPLOAD_KWARGS = _file_upload_kwargs()
 
 # Auto-detect and add script directory to Python path (for Colab compatibility)
 def setup_python_path():
@@ -861,11 +694,11 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
     return (final_file_path, status_text) if final_file_path and os.path.exists(final_file_path) else (None, status_text)
 
 # ---- Gradio UI definition for Google Colab ----
-with gr.Blocks(**_blocks_kwargs()) as demo:
-    gr.Markdown("# 📊 CANF Analyzer", elem_classes=["canf-title"])
-    gr.Markdown("### Process and match shipment data with rate card lanes", elem_classes=["canf-subtitle"])
+with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
+    gr.Markdown("# 📊 CANF Analyzer")
+    gr.Markdown("### Process and match shipment data with rate card lanes")
     
-    with gr.Accordion("📖 Instructions & Information", open=False, elem_classes=["canf-accordion"]):
+    with gr.Accordion("📖 Instructions & Information", open=False):
         gr.Markdown("""
         ## How to Use This Workflow
         
@@ -925,48 +758,24 @@ with gr.Blocks(**_blocks_kwargs()) as demo:
     
     gr.Markdown("---")
     gr.Markdown("### 📁 File Upload")
+    gr.Markdown("**Required:** Rate Card File, ETOF File, and Shipper ID  |  **Optional:** LC File(s), Origin File, Order Files")
+    # State to accumulate LC files (allows adding more files after initial upload)
     lc_files_state = gr.State([])
-
-    with gr.Group():
-        gr.Markdown("**Required**", elem_classes=["canf-section-label"])
-        etof_input = gr.File(
-            label="ETOF File (.xlsx) *Required",
-            file_types=[".xlsx", ".xls"],
-            **FILE_UPLOAD_KWARGS,
-        )
-        shipper_id_input = gr.Textbox(
-            label="Shipper ID *Required",
-            placeholder="e.g. dairb or use Shipper short name as string",
-        )
-
-    with gr.Group():
-        gr.Markdown("**Optional**", elem_classes=["canf-section-label"])
-        rate_card_input = gr.File(
-            label="Rate Card File(s) (.xlsx) - Optional",
-            file_types=[".xlsx", ".xls"],
-            file_count="multiple",
-            **FILE_UPLOAD_KWARGS,
-        )
-        lc_input = gr.File(
-            label="LC Files/Folder - drag folder or files (only LC*.xml used)",
-            file_count="multiple",
-            **FILE_UPLOAD_KWARGS,
-        )
-        origin_input = gr.File(
-            label="Origin File (.xlsx, .csv, .edi) *Optional",
-            file_types=[".xlsx", ".xls", ".csv", ".edi"],
-            **FILE_UPLOAD_KWARGS,
-        )
-        order_files_input = gr.File(
-            label="Order Files Export (.xlsx) *Optional",
-            file_types=[".xlsx", ".xls", ".csv"],
-            **FILE_UPLOAD_KWARGS,
-        )
+    
+    with gr.Row():
+        rate_card_input = gr.File(label="Rate Card File(s) (.xlsx) - Optional", file_types=[".xlsx", ".xls"], file_count="multiple")
+        etof_input = gr.File(label="ETOF File (.xlsx) *Required", file_types=[".xlsx", ".xls"])
+        lc_input = gr.File(label="LC Files/Folder - drag folder or files (only LC*.xml used)", file_count="multiple")
+    with gr.Row():
+        origin_input = gr.File(label="Origin File (.xlsx, .csv, .edi) *Optional", file_types=[".xlsx", ".xls", ".csv", ".edi"])
+        order_files_input = gr.File(label="Order Files Export (.xlsx) *Optional", file_types=[".xlsx", ".xls", ".csv"])
+        shipper_id_input = gr.Textbox(label="Shipper ID *Required", placeholder="e.g. dairb or use Shipper short name as string")
+    
+    with gr.Row():
         mismatch_report_input = gr.File(
             label="Mismatch Report File(s) (.xlsx) *Optional - for ETOF enrichment",
             file_types=[".xlsx", ".xls"],
-            file_count="multiple",
-            **FILE_UPLOAD_KWARGS,
+            file_count="multiple"
         )
     
     def accumulate_lc_files(new_files, current_files):
@@ -1022,20 +831,15 @@ with gr.Blocks(**_blocks_kwargs()) as demo:
     launch_button = gr.Button("🚀 Run Analyzer", variant="primary", size="lg")
     
     with gr.Row():
-        with gr.Column(scale=1):
-            out = gr.File(
-                label="📥 Result.xlsx (Download Final Output)",
-                **FILE_UPLOAD_KWARGS,
-            )
-        with gr.Column(scale=2):
-            status_output = gr.Textbox(
-                label="📋 Status & Errors",
-                lines=20,
-                max_lines=30,
-                interactive=False,
-                placeholder="Workflow status and error messages will appear here...",
-                **_status_textbox_kwargs(),
-            )
+        out = gr.File(label="📥 Result.xlsx (Download Final Output)")
+        status_output = gr.Textbox(
+            label="📋 Status & Errors",
+            lines=20,
+            max_lines=30,
+            interactive=False,
+            placeholder="Workflow status and error messages will appear here...",
+            show_copy_button=True
+        )
     
     # Function to toggle visibility of origin parameters
     def toggle_origin_params(origin_file):
@@ -1105,19 +909,13 @@ if __name__ == "__main__":
             #demo.launch(share=True, debug=False, show_error=True)
         else:
             print("🚀 Launching Gradio interface for Google Colab (local access)...")
-            demo.launch(
-                server_name="0.0.0.0",
-                share=False,
-                debug=False,
-                show_error=True,
-                **_launch_kwargs(),
-            )
+            demo.launch(server_name="0.0.0.0", share=False, debug=False, show_error=True)
     else:
         # For local execution
         print("🚀 Launching Gradio interface locally...")
         print(f"💡 Input files will be saved to: {input_dir}")
         print(f"💡 Output files will be saved to: {output_dir}")
-        demo.launch(server_name="127.0.0.1", share=False, **_launch_kwargs())
+        demo.launch(server_name="127.0.0.1", share=False)
 
 
 
