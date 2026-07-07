@@ -1,9 +1,10 @@
+import inspect
 import os
 import sys
 import gradio as gr
 
-# Gradio 6 changed Soft defaults (indigo + Montserrat). CANF uses the classic
-# Gradio 5 Soft look: purple accents + Source Sans Pro + compact upload areas.
+# Gradio 6 restyled File/Block components. CANF theme restores the Gradio 5 Soft look:
+# purple pill labels, Source Sans Pro, soft shadows, solid upload areas.
 CANF_CUSTOM_CSS = """
 .canf-section-label {
     background: #f3f4f6 !important;
@@ -25,7 +26,60 @@ CANF_CUSTOM_CSS = """
     color: #4b5563 !important;
     font-weight: 400 !important;
 }
+.canf-file-upload .wrap,
+.canf-file-upload .container {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+}
+.canf-file-upload .placeholder,
+.canf-file-upload .upload-container,
+.canf-file-upload [class*="upload"] {
+    border: 1px solid #f3f4f6 !important;
+    border-style: solid !important;
+    border-radius: 0.5rem !important;
+    background: #ffffff !important;
+    box-shadow: 0 1px 4px 0 rgb(0 0 0 / 0.08) !important;
+    min-height: 7rem !important;
+}
+.canf-file-upload .placeholder:hover,
+.canf-file-upload .upload-container:hover {
+    border-color: #e9d5ff !important;
+    box-shadow: 0 2px 5px 0 rgb(0 0 0 / 0.1) !important;
+}
+.canf-file-upload label span,
+.canf-file-upload .label-wrap span,
+.canf-file-upload .icon-wrap {
+    color: #9333ea !important;
+}
+.canf-file-upload a,
+.canf-file-upload button.link,
+.canf-file-upload .or {
+    color: #9333ea !important;
+}
+.canf-file-upload .icon-wrap svg {
+    color: #9333ea !important;
+    fill: #9333ea !important;
+    width: 1.5rem !important;
+    height: 1.5rem !important;
+}
+.canf-accordion > .label-wrap {
+    border: 1px solid #e5e7eb !important;
+    border-radius: 0.5rem !important;
+    background: #ffffff !important;
+}
 """
+
+def _gradio_major_version():
+    try:
+        return int(gr.__version__.split(".")[0])
+    except (AttributeError, ValueError):
+        return 5
+
+def _supports_param(component_cls, param_name):
+    return param_name in inspect.signature(component_cls.__init__).parameters
+
+IS_GRADIO_6 = _gradio_major_version() >= 6
 
 def build_canf_theme():
     theme = gr.themes.Soft(
@@ -49,12 +103,71 @@ def build_canf_theme():
             "monospace",
         ),
     )
-    theme.custom_css = CANF_CUSTOM_CSS
+    theme = theme.set(
+        background_fill_primary="*neutral_50",
+        block_background_fill="white",
+        block_border_width="0px",
+        block_label_background_fill="*primary_100",
+        block_label_background_fill_dark="*primary_600",
+        block_label_text_color="*primary_500",
+        block_label_text_color_dark="white",
+        block_label_text_weight="600",
+        block_label_radius="*radius_md",
+        block_label_padding="*spacing_sm *spacing_md",
+        block_title_background_fill="*block_label_background_fill",
+        block_title_text_color="*primary_500",
+        block_title_text_weight="600",
+        input_background_fill="white",
+        input_border_color="*neutral_50",
+        input_shadow="0 1px 4px 0 rgb(0 0 0 / 0.1)",
+        input_shadow_focus="0 2px 5px 0 rgb(0 0 0 / 0.1)",
+        shadow_drop="0 1px 4px 0 rgb(0 0 0 / 0.1)",
+        shadow_drop_lg="0 2px 5px 0 rgb(0 0 0 / 0.1)",
+        button_primary_background_fill="*primary_500",
+        button_primary_background_fill_hover="*primary_400",
+        button_primary_text_color="white",
+        link_text_color="*primary_500",
+        link_text_color_hover="*primary_600",
+        link_text_color_active="*primary_700",
+        link_text_color_visited="*primary_600",
+    )
+    if hasattr(theme, "custom_css"):
+        theme.custom_css = CANF_CUSTOM_CSS
     return theme
 
 GRADIO_THEME = build_canf_theme()
-LAUNCH_KWARGS = {"theme": GRADIO_THEME}
-FILE_UPLOAD_KWARGS = {"height": 120}
+
+def _blocks_kwargs():
+    kwargs = {"title": "CANF Analyzer"}
+    if _supports_param(gr.Blocks, "fill_width"):
+        kwargs["fill_width"] = True
+    if not IS_GRADIO_6:
+        kwargs["theme"] = GRADIO_THEME
+        if _supports_param(gr.Blocks, "css"):
+            kwargs["css"] = CANF_CUSTOM_CSS
+    return kwargs
+
+def _launch_kwargs():
+    kwargs = {}
+    if IS_GRADIO_6:
+        kwargs["theme"] = GRADIO_THEME
+        kwargs["css"] = CANF_CUSTOM_CSS
+    return kwargs
+
+def _file_upload_kwargs():
+    kwargs = {"elem_classes": ["canf-file-upload"]}
+    if _supports_param(gr.File, "height"):
+        kwargs["height"] = 120
+    return kwargs
+
+def _status_textbox_kwargs():
+    if _supports_param(gr.Textbox, "buttons"):
+        return {"buttons": ["copy"]}
+    if _supports_param(gr.Textbox, "show_copy_button"):
+        return {"show_copy_button": True}
+    return {}
+
+FILE_UPLOAD_KWARGS = _file_upload_kwargs()
 
 # Auto-detect and add script directory to Python path (for Colab compatibility)
 def setup_python_path():
@@ -748,11 +861,11 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
     return (final_file_path, status_text) if final_file_path and os.path.exists(final_file_path) else (None, status_text)
 
 # ---- Gradio UI definition for Google Colab ----
-with gr.Blocks(title="CANF Analyzer", fill_width=True) as demo:
+with gr.Blocks(**_blocks_kwargs()) as demo:
     gr.Markdown("# 📊 CANF Analyzer", elem_classes=["canf-title"])
     gr.Markdown("### Process and match shipment data with rate card lanes", elem_classes=["canf-subtitle"])
     
-    with gr.Accordion("📖 Instructions & Information", open=False):
+    with gr.Accordion("📖 Instructions & Information", open=False, elem_classes=["canf-accordion"]):
         gr.Markdown("""
         ## How to Use This Workflow
         
@@ -921,7 +1034,7 @@ with gr.Blocks(title="CANF Analyzer", fill_width=True) as demo:
                 max_lines=30,
                 interactive=False,
                 placeholder="Workflow status and error messages will appear here...",
-                buttons=["copy"],
+                **_status_textbox_kwargs(),
             )
     
     # Function to toggle visibility of origin parameters
@@ -997,14 +1110,14 @@ if __name__ == "__main__":
                 share=False,
                 debug=False,
                 show_error=True,
-                **LAUNCH_KWARGS,
+                **_launch_kwargs(),
             )
     else:
         # For local execution
         print("🚀 Launching Gradio interface locally...")
         print(f"💡 Input files will be saved to: {input_dir}")
         print(f"💡 Output files will be saved to: {output_dir}")
-        demo.launch(server_name="127.0.0.1", share=False, **LAUNCH_KWARGS)
+        demo.launch(server_name="127.0.0.1", share=False, **_launch_kwargs())
 
 
 
