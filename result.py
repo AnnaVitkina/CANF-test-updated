@@ -694,7 +694,9 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
     return (final_file_path, status_text) if final_file_path and os.path.exists(final_file_path) else (None, status_text)
 
 # ---- Gradio UI definition for Google Colab ----
-with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
+GRADIO_THEME = gr.themes.Soft()
+
+with gr.Blocks(title="CANF Analyzer") as demo:
     gr.Markdown("# 📊 CANF Analyzer")
     gr.Markdown("### Process and match shipment data with rate card lanes")
     
@@ -838,7 +840,7 @@ with gr.Blocks(title="CANF Analyzer", theme=gr.themes.Soft()) as demo:
             max_lines=30,
             interactive=False,
             placeholder="Workflow status and error messages will appear here...",
-            show_copy_button=True
+            buttons=["copy"],
         )
     
     # Function to toggle visibility of origin parameters
@@ -897,7 +899,13 @@ if __name__ == "__main__":
     print(f"📁 Created output folder: {output_dir}")
 
     #print("🚀 Launching Gradio interface for Google Colab (local access)...")
-        #demo.launch(share=False, debug=True, show_error=True)
+            #demo.launch(
+                #server_name="0.0.0.0",
+                #share=False,
+                #debug=False,
+                #show_error=True,
+                #theme=GRADIO_THEME,
+            #)
     
     # Check if running in Colab
     in_colab = 'google.colab' in sys.modules
@@ -915,7 +923,7 @@ if __name__ == "__main__":
         print("🚀 Launching Gradio interface locally...")
         print(f"💡 Input files will be saved to: {input_dir}")
         print(f"💡 Output files will be saved to: {output_dir}")
-        demo.launch(server_name="127.0.0.1", share=False)
+        demo.launch(server_name="127.0.0.1", share=False, theme=GRADIO_THEME)
 
 
 
