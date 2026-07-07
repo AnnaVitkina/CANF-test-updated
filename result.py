@@ -2,6 +2,36 @@ import os
 import sys
 import gradio as gr
 
+def _gradio_major_version():
+    try:
+        return int(gr.__version__.split(".")[0])
+    except (AttributeError, ValueError):
+        return 5
+
+GRADIO_MAJOR = _gradio_major_version()
+IS_GRADIO_6 = GRADIO_MAJOR >= 6
+
+if IS_GRADIO_6:
+    print(
+        "⚠️ Gradio 6 detected — UI may look broken. For the original layout run in Colab:\n"
+        "   !pip install 'gradio>=5.23,<6'\n"
+        "   Then: Runtime → Restart session, and run result.py again."
+    )
+
+def _blocks_kwargs():
+    kwargs = {"title": "CANF Analyzer"}
+    if not IS_GRADIO_6:
+        kwargs["theme"] = gr.themes.Soft()
+    return kwargs
+
+def _launch_theme_kwargs():
+    return {"theme": gr.themes.Soft()} if IS_GRADIO_6 else {}
+
+def _status_textbox_kwargs():
+    if IS_GRADIO_6:
+        return {"buttons": ["copy"]}
+    return {"show_copy_button": True}
+
 # Auto-detect and add script directory to Python path (for Colab compatibility)
 def setup_python_path():
     """Setup Python path to include the script directory for imports."""
@@ -694,9 +724,7 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
     return (final_file_path, status_text) if final_file_path and os.path.exists(final_file_path) else (None, status_text)
 
 # ---- Gradio UI definition for Google Colab ----
-GRADIO_THEME = gr.themes.Soft()
-
-with gr.Blocks(title="CANF Analyzer") as demo:
+with gr.Blocks(**_blocks_kwargs()) as demo:
     gr.Markdown("# 📊 CANF Analyzer")
     gr.Markdown("### Process and match shipment data with rate card lanes")
     
@@ -760,24 +788,39 @@ with gr.Blocks(title="CANF Analyzer") as demo:
     
     gr.Markdown("---")
     gr.Markdown("### 📁 File Upload")
-    gr.Markdown("**Required:** Rate Card File, ETOF File, and Shipper ID  |  **Optional:** LC File(s), Origin File, Order Files")
-    # State to accumulate LC files (allows adding more files after initial upload)
     lc_files_state = gr.State([])
-    
-    with gr.Row():
-        rate_card_input = gr.File(label="Rate Card File(s) (.xlsx) - Optional", file_types=[".xlsx", ".xls"], file_count="multiple")
+
+    with gr.Group():
+        gr.Markdown("**Required**")
         etof_input = gr.File(label="ETOF File (.xlsx) *Required", file_types=[".xlsx", ".xls"])
-        lc_input = gr.File(label="LC Files/Folder - drag folder or files (only LC*.xml used)", file_count="multiple")
-    with gr.Row():
-        origin_input = gr.File(label="Origin File (.xlsx, .csv, .edi) *Optional", file_types=[".xlsx", ".xls", ".csv", ".edi"])
-        order_files_input = gr.File(label="Order Files Export (.xlsx) *Optional", file_types=[".xlsx", ".xls", ".csv"])
-        shipper_id_input = gr.Textbox(label="Shipper ID *Required", placeholder="e.g. dairb or use Shipper short name as string")
-    
-    with gr.Row():
+        shipper_id_input = gr.Textbox(
+            label="Shipper ID *Required",
+            placeholder="e.g. dairb or use Shipper short name as string",
+        )
+
+    with gr.Group():
+        gr.Markdown("**Optional**")
+        rate_card_input = gr.File(
+            label="Rate Card File(s) (.xlsx) - Optional",
+            file_types=[".xlsx", ".xls"],
+            file_count="multiple",
+        )
+        lc_input = gr.File(
+            label="LC Files/Folder - drag folder or files (only LC*.xml used)",
+            file_count="multiple",
+        )
+        origin_input = gr.File(
+            label="Origin File (.xlsx, .csv, .edi) *Optional",
+            file_types=[".xlsx", ".xls", ".csv", ".edi"],
+        )
+        order_files_input = gr.File(
+            label="Order Files Export (.xlsx) *Optional",
+            file_types=[".xlsx", ".xls", ".csv"],
+        )
         mismatch_report_input = gr.File(
             label="Mismatch Report File(s) (.xlsx) *Optional - for ETOF enrichment",
             file_types=[".xlsx", ".xls"],
-            file_count="multiple"
+            file_count="multiple",
         )
     
     def accumulate_lc_files(new_files, current_files):
@@ -833,15 +876,17 @@ with gr.Blocks(title="CANF Analyzer") as demo:
     launch_button = gr.Button("🚀 Run Analyzer", variant="primary", size="lg")
     
     with gr.Row():
-        out = gr.File(label="📥 Result.xlsx (Download Final Output)")
-        status_output = gr.Textbox(
-            label="📋 Status & Errors",
-            lines=20,
-            max_lines=30,
-            interactive=False,
-            placeholder="Workflow status and error messages will appear here...",
-            buttons=["copy"],
-        )
+        with gr.Column(scale=1):
+            out = gr.File(label="📥 Result.xlsx (Download Final Output)")
+        with gr.Column(scale=2):
+            status_output = gr.Textbox(
+                label="📋 Status & Errors",
+                lines=20,
+                max_lines=30,
+                interactive=False,
+                placeholder="Workflow status and error messages will appear here...",
+                **_status_textbox_kwargs(),
+            )
     
     # Function to toggle visibility of origin parameters
     def toggle_origin_params(origin_file):
@@ -899,13 +944,7 @@ if __name__ == "__main__":
     print(f"📁 Created output folder: {output_dir}")
 
     #print("🚀 Launching Gradio interface for Google Colab (local access)...")
-            #demo.launch(
-                #server_name="0.0.0.0",
-                #share=False,
-                #debug=False,
-                #show_error=True,
-                #theme=GRADIO_THEME,
-            #)
+        #demo.launch(share=False, debug=True, show_error=True)
     
     # Check if running in Colab
     in_colab = 'google.colab' in sys.modules
@@ -917,13 +956,19 @@ if __name__ == "__main__":
             #demo.launch(share=True, debug=False, show_error=True)
         else:
             print("🚀 Launching Gradio interface for Google Colab (local access)...")
-            demo.launch(server_name="0.0.0.0", share=False, debug=False, show_error=True)
+            demo.launch(
+                server_name="0.0.0.0",
+                share=False,
+                debug=False,
+                show_error=True,
+                **_launch_theme_kwargs(),
+            )
     else:
         # For local execution
         print("🚀 Launching Gradio interface locally...")
         print(f"💡 Input files will be saved to: {input_dir}")
         print(f"💡 Output files will be saved to: {output_dir}")
-        demo.launch(server_name="127.0.0.1", share=False, theme=GRADIO_THEME)
+        demo.launch(server_name="127.0.0.1", share=False, **_launch_theme_kwargs())
 
 
 
