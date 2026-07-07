@@ -2,35 +2,59 @@ import os
 import sys
 import gradio as gr
 
-def _gradio_major_version():
-    try:
-        return int(gr.__version__.split(".")[0])
-    except (AttributeError, ValueError):
-        return 5
+# Gradio 6 changed Soft defaults (indigo + Montserrat). CANF uses the classic
+# Gradio 5 Soft look: purple accents + Source Sans Pro + compact upload areas.
+CANF_CUSTOM_CSS = """
+.canf-section-label {
+    background: #f3f4f6 !important;
+    color: #374151 !important;
+    font-weight: 600 !important;
+    padding: 0.5rem 0.75rem !important;
+    border-radius: 0.375rem !important;
+    margin: 0 0 0.75rem 0 !important;
+}
+.canf-section-label p {
+    margin: 0 !important;
+    font-weight: 600 !important;
+}
+.canf-title h1 {
+    font-weight: 700 !important;
+    color: #111827 !important;
+}
+.canf-subtitle p {
+    color: #4b5563 !important;
+    font-weight: 400 !important;
+}
+"""
 
-GRADIO_MAJOR = _gradio_major_version()
-IS_GRADIO_6 = GRADIO_MAJOR >= 6
-
-if IS_GRADIO_6:
-    print(
-        "⚠️ Gradio 6 detected — UI may look broken. For the original layout run in Colab:\n"
-        "   !pip install 'gradio>=5.23,<6'\n"
-        "   Then: Runtime → Restart session, and run result.py again."
+def build_canf_theme():
+    theme = gr.themes.Soft(
+        primary_hue=gr.themes.colors.purple,
+        secondary_hue=gr.themes.colors.purple,
+        neutral_hue=gr.themes.colors.gray,
+        spacing_size=gr.themes.sizes.spacing_md,
+        radius_size=gr.themes.sizes.radius_md,
+        text_size=gr.themes.sizes.text_md,
+        font=(
+            gr.themes.GoogleFont("Source Sans Pro"),
+            "ui-sans-serif",
+            "system-ui",
+            "-apple-system",
+            "sans-serif",
+        ),
+        font_mono=(
+            gr.themes.GoogleFont("IBM Plex Mono"),
+            "ui-monospace",
+            "Consolas",
+            "monospace",
+        ),
     )
+    theme.custom_css = CANF_CUSTOM_CSS
+    return theme
 
-def _blocks_kwargs():
-    kwargs = {"title": "CANF Analyzer"}
-    if not IS_GRADIO_6:
-        kwargs["theme"] = gr.themes.Soft()
-    return kwargs
-
-def _launch_theme_kwargs():
-    return {"theme": gr.themes.Soft()} if IS_GRADIO_6 else {}
-
-def _status_textbox_kwargs():
-    if IS_GRADIO_6:
-        return {"buttons": ["copy"]}
-    return {"show_copy_button": True}
+GRADIO_THEME = build_canf_theme()
+LAUNCH_KWARGS = {"theme": GRADIO_THEME}
+FILE_UPLOAD_KWARGS = {"height": 120}
 
 # Auto-detect and add script directory to Python path (for Colab compatibility)
 def setup_python_path():
@@ -724,9 +748,9 @@ def run_full_workflow_gradio(rate_card_file, etof_file, lc_file, origin_file, or
     return (final_file_path, status_text) if final_file_path and os.path.exists(final_file_path) else (None, status_text)
 
 # ---- Gradio UI definition for Google Colab ----
-with gr.Blocks(**_blocks_kwargs()) as demo:
-    gr.Markdown("# 📊 CANF Analyzer")
-    gr.Markdown("### Process and match shipment data with rate card lanes")
+with gr.Blocks(title="CANF Analyzer", fill_width=True) as demo:
+    gr.Markdown("# 📊 CANF Analyzer", elem_classes=["canf-title"])
+    gr.Markdown("### Process and match shipment data with rate card lanes", elem_classes=["canf-subtitle"])
     
     with gr.Accordion("📖 Instructions & Information", open=False):
         gr.Markdown("""
@@ -791,36 +815,45 @@ with gr.Blocks(**_blocks_kwargs()) as demo:
     lc_files_state = gr.State([])
 
     with gr.Group():
-        gr.Markdown("**Required**")
-        etof_input = gr.File(label="ETOF File (.xlsx) *Required", file_types=[".xlsx", ".xls"])
+        gr.Markdown("**Required**", elem_classes=["canf-section-label"])
+        etof_input = gr.File(
+            label="ETOF File (.xlsx) *Required",
+            file_types=[".xlsx", ".xls"],
+            **FILE_UPLOAD_KWARGS,
+        )
         shipper_id_input = gr.Textbox(
             label="Shipper ID *Required",
             placeholder="e.g. dairb or use Shipper short name as string",
         )
 
     with gr.Group():
-        gr.Markdown("**Optional**")
+        gr.Markdown("**Optional**", elem_classes=["canf-section-label"])
         rate_card_input = gr.File(
             label="Rate Card File(s) (.xlsx) - Optional",
             file_types=[".xlsx", ".xls"],
             file_count="multiple",
+            **FILE_UPLOAD_KWARGS,
         )
         lc_input = gr.File(
             label="LC Files/Folder - drag folder or files (only LC*.xml used)",
             file_count="multiple",
+            **FILE_UPLOAD_KWARGS,
         )
         origin_input = gr.File(
             label="Origin File (.xlsx, .csv, .edi) *Optional",
             file_types=[".xlsx", ".xls", ".csv", ".edi"],
+            **FILE_UPLOAD_KWARGS,
         )
         order_files_input = gr.File(
             label="Order Files Export (.xlsx) *Optional",
             file_types=[".xlsx", ".xls", ".csv"],
+            **FILE_UPLOAD_KWARGS,
         )
         mismatch_report_input = gr.File(
             label="Mismatch Report File(s) (.xlsx) *Optional - for ETOF enrichment",
             file_types=[".xlsx", ".xls"],
             file_count="multiple",
+            **FILE_UPLOAD_KWARGS,
         )
     
     def accumulate_lc_files(new_files, current_files):
@@ -877,7 +910,10 @@ with gr.Blocks(**_blocks_kwargs()) as demo:
     
     with gr.Row():
         with gr.Column(scale=1):
-            out = gr.File(label="📥 Result.xlsx (Download Final Output)")
+            out = gr.File(
+                label="📥 Result.xlsx (Download Final Output)",
+                **FILE_UPLOAD_KWARGS,
+            )
         with gr.Column(scale=2):
             status_output = gr.Textbox(
                 label="📋 Status & Errors",
@@ -885,7 +921,7 @@ with gr.Blocks(**_blocks_kwargs()) as demo:
                 max_lines=30,
                 interactive=False,
                 placeholder="Workflow status and error messages will appear here...",
-                **_status_textbox_kwargs(),
+                buttons=["copy"],
             )
     
     # Function to toggle visibility of origin parameters
@@ -961,14 +997,14 @@ if __name__ == "__main__":
                 share=False,
                 debug=False,
                 show_error=True,
-                **_launch_theme_kwargs(),
+                **LAUNCH_KWARGS,
             )
     else:
         # For local execution
         print("🚀 Launching Gradio interface locally...")
         print(f"💡 Input files will be saved to: {input_dir}")
         print(f"💡 Output files will be saved to: {output_dir}")
-        demo.launch(server_name="127.0.0.1", share=False, **_launch_theme_kwargs())
+        demo.launch(server_name="127.0.0.1", share=False, **LAUNCH_KWARGS)
 
 
 
